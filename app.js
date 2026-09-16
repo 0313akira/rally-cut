@@ -31,15 +31,6 @@ const NAME=i=>["nose","left_eye","right_eye","left_ear","right_ear","left_should
 
 $("run").onclick=async()=>{
   $("run").disabled=true; $("loadBtn").disabled=true;
-  // iPhone対策：一度も再生していない動画からは絵を取り出せないので、
-  // ボタンを押した勢い（ユーザー操作）が残っているうちに一瞬だけ再生して止める
-  try{
-    $("status").textContent="動画を準備中…";
-    v.muted=true; v.playsInline=true;
-    await v.play();
-    await new Promise(r=>setTimeout(r,250));
-    v.pause();
-  }catch(e){ /* 再生できなくても続行する */ }
   let det;
   try{
     $("status").textContent="判定モデルを読み込み中…";
@@ -51,14 +42,8 @@ $("run").onclick=async()=>{
   }
   const W=512; work.width=W; work.height=Math.round(W*v.videoHeight/v.videoWidth);
   const g=work.getContext("2d",{willReadFrequently:true});
-  // seeked が来ない端末があるので、待ちすぎないように保険をかける
-  const seek=t=>new Promise(r=>{
-    let done=false;
-    const ok=()=>{ if(!done){ done=true; r(); } };
-    v.addEventListener("seeked",ok,{once:true});
-    setTimeout(ok,700);
-    v.currentTime=Math.min(t,duration-0.05);
-  });
+  const seek=t=>new Promise(r=>{v.currentTime=Math.min(t,duration-0.05);
+    v.addEventListener("seeked",()=>r(),{once:true});});
   v.pause();
 
   const N=Math.floor(duration*FPS), raw=[], t0=performance.now();
@@ -83,9 +68,7 @@ $("run").onclick=async()=>{
     if(i%4===0){
       const done=(i+1)/N, el=(performance.now()-t0)/1000;
       const left=done>0.02? Math.round(el*(1-done)/done) : null;
-      const el2=(performance.now()-t0)/1000;
-      $("status").textContent=`${fmt(t)} / ${fmt(duration)}`+(left!==null?`　のこり約${fmt(left)}`:"")
-        + (i<8 && el2>25 ? "　…進みが遅いようです。パソコンで試してください" : "");
+      $("status").textContent=`${fmt(t)} / ${fmt(duration)}`+(left!==null?`　のこり約${fmt(left)}`:"");
       $("fill").style.width=Math.round(100*done)+"%"; await tick();
     }
   }
