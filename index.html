@@ -16,13 +16,13 @@
 <div class="card">
   <p class="step"><b>1</b>動画を選ぶ</p>
   <input type="file" id="file" accept="video/*">
-  <p class="hint" style="margin:8px 0 0">撮ったままの元ファイルで大丈夫です。長さの制限はありません。</p>
+  <p class="hint" style="margin:8px 0 0">撮ったままの元ファイルで大丈夫です。画質は落ちません。<br>4Kや長い動画は、選んだあと読み込みに数分かかることがあります（iPhoneが形式を変換するため）。そのまま待ってください。</p>
   <div id="err"></div>
 </div>
 
 <div class="card" id="scanCard" hidden>
   <p class="step"><b>2</b>解析する</p>
-  <p class="hint" style="margin:0 0 12px">選手の動きを1秒に4コマ読み取ります。<b id="estTime">—</b></p>
+  <p class="hint" style="margin:0 0 12px">選手の動きを1秒に4コマ読み取ります。<b id="estTime">—</b><br><b>終わるまで画面を消さず、他のアプリに移らないでください。</b>止まってしまいます。</p>
   <div class="row">
     <button class="btn btn-primary" id="run">解析をはじめる</button>
     <button class="btn btn-ghost" id="loadBtn">前回の解析を読み込む</button>

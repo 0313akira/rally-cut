@@ -17,8 +17,8 @@ $("file").onchange=e=>{
     feats=null; prob=null; segs=[]; chk={on:false,i:0,marks:[]};
     $("scanCard").hidden=false;
     $("playCard").hidden=true; $("fbCard").hidden=true; $("tuneCard").hidden=true; $("checkCard").hidden=true; $("outCard").hidden=true;
-    const mins=Math.max(1,Math.round(duration/60*0.7));
-    $("estTime").textContent=`この動画（${fmt(duration)}）だと、だいたい${mins}分かかります。`;
+    const mins=Math.max(1,Math.round(duration/60*1.2));
+    $("estTime").textContent=`この動画（${fmt(duration)}）だと、スマホで${mins}分ぐらい、パソコンならその半分ほどです。`;
     $("status").textContent=""; $("fill").style.width="0";
   };
 };
@@ -30,29 +30,66 @@ const NAME=i=>["nose","left_eye","right_eye","left_ear","right_ear","left_should
   "left_knee","right_knee","left_ankle","right_ankle"][i];
 
 $("run").onclick=async()=>{
-  $("run").disabled=true; $("loadBtn").disabled=true;
+  $("run").disabled=true; $("loadBtn").disabled=true; $("err").innerHTML="";
+  try{
+    await runScan();
+    $("status").textContent="完了";
+    $("fill").style.width="100%";
+    finish();
+  }catch(err){
+    // 黙って固まらないように、止まった理由を必ず画面に出す
+    const msg=(err&&err.message)?err.message:String(err);
+    $("err").innerHTML='<div class="err"><b>解析が途中で止まりました</b><br>'+msg+
+      '<br><br>長い動画や画質の高い動画は、スマホが途中で力尽きることがあります。'+
+      '動画を短く切るか、パソコンで開いてみてください。</div>';
+    $("status").textContent="止まりました";
+  }
+  try{ v.pause(); v.playbackRate=1; }catch(e){}
+  $("run").disabled=false; $("loadBtn").disabled=false;
+};
+
+const SPEED=2;      // 解析中に動画を流す速さ（倍速）
+const CHUNK=20;     // 一度に溜めるコマ数（＝5秒ぶん）
+
+async function runScan(){
+  // ① iPhone対策：一度も再生していない動画からは絵を取り出せない。
+  //    ボタンを押した勢い（ユーザー操作）が残っているうちに一度再生しておく。
+  $("status").textContent="動画を準備中…";
+  v.muted=true; v.playsInline=true; v.playbackRate=1;
+  try{ await v.play(); await new Promise(r=>setTimeout(r,500)); v.pause(); }catch(e){}
+
+  // ② 姿勢検出（MoveNet）を用意する
+  $("status").textContent="判定モデルを読み込み中…";
   let det;
   try{
-    $("status").textContent="判定モデルを読み込み中…";
     det=await poseDetection.createDetector(poseDetection.SupportedModels.MoveNet,
       {modelType:poseDetection.movenet.modelType.MULTIPOSE_LIGHTNING});
   }catch(err){
-    $("err").innerHTML='<div class="err">モデルを読み込めませんでした。ネットにつながった状態で開いてください。<br>'+err.message+'</div>';
-    $("run").disabled=false; $("loadBtn").disabled=false; return;
+    throw new Error("判定モデルを読み込めませんでした。ネットにつながった状態で開いてください。（"+err.message+"）");
   }
-  const W=512; work.width=W; work.height=Math.round(W*v.videoHeight/v.videoWidth);
-  const g=work.getContext("2d",{willReadFrequently:true});
-  const seek=t=>new Promise(r=>{v.currentTime=Math.min(t,duration-0.05);
-    v.addEventListener("seeked",()=>r(),{once:true});});
-  v.pause();
 
+  const W=512, H=Math.round(W*v.videoHeight/v.videoWidth);
+  work.width=W; work.height=H;
   const N=Math.floor(duration*FPS), raw=[], t0=performance.now();
-  for(let i=0;i<N;i++){
-    const t=i/FPS;
-    await seek(t);
-    g.drawImage(v,0,0,work.width,work.height);
-    const poses=await det.estimatePoses(work);
-    const ppl=poses.map(p=>{
+
+  // 絵をためておく入れ物。毎回この20枚を使い回すので、動画が長くてもメモリが増えない
+  const buf=[];
+  for(let k=0;k<CHUNK;k++){
+    const cv=document.createElement("canvas"); cv.width=W; cv.height=H;
+    buf.push({cv:cv, g:cv.getContext("2d",{willReadFrequently:true}), t:0});
+  }
+
+  const show=(i,at)=>{
+    const done=(i+1)/N, el=(performance.now()-t0)/1000;
+    const left=done>0.02? Math.round(el*(1-done)/done) : null;
+    $("status").textContent=fmt(at)+" / "+fmt(duration)+(left!==null?"　のこり約"+fmt(left):"");
+    $("fill").style.width=Math.round(100*done)+"%";
+  };
+
+  // 1枚の絵から選手を見つける
+  const detect=async(img)=>{
+    const poses=await det.estimatePoses(img);
+    return poses.map(p=>{
       const kp={}; p.keypoints.forEach((k,j)=>{ if(k.score>0.25) kp[NAME(j)]=[k.x,k.y]; });
       const sh=kp.left_shoulder&&kp.right_shoulder
         ? [(kp.left_shoulder[0]+kp.right_shoulder[0])/2,(kp.left_shoulder[1]+kp.right_shoulder[1])/2] : null;
@@ -62,23 +99,74 @@ $("run").onclick=async()=>{
       const scale=Math.max(8,Math.hypot(sh[0]-hp[0],sh[1]-hp[1]));
       return {kp,center:[(sh[0]+hp[0])/2,(sh[1]+hp[1])/2],scale};
     }).filter(Boolean)
-      .filter(p=>p.center[0]>work.width*0.15&&p.center[0]<work.width*0.85&&p.center[1]>work.height*0.10)
+      .filter(p=>p.center[0]>W*0.15&&p.center[0]<W*0.85&&p.center[1]>H*0.10)
       .sort((a,b)=>b.scale-a.scale).slice(0,2);
-    raw.push({t,ppl});
-    if(i%4===0){
-      const done=(i+1)/N, el=(performance.now()-t0)/1000;
-      const left=done>0.02? Math.round(el*(1-done)/done) : null;
-      $("status").textContent=`${fmt(t)} / ${fmt(duration)}`+(left!==null?`　のこり約${fmt(left)}`:"");
-      $("fill").style.width=Math.round(100*done)+"%"; await tick();
+  };
+
+  // 指定の時刻へ飛ぶ（最初に1回だけ使う）
+  const jumpTo=t=>new Promise(r=>{
+    let done=false; const ok=()=>{ if(!done){ done=true; r(); } };
+    v.addEventListener("seeked",ok,{once:true});
+    setTimeout(ok,3000);
+    v.currentTime=Math.min(Math.max(0,t),Math.max(0,duration-0.05));
+  });
+
+  // 動画を流しながら、0.25秒ごとの絵を take 枚ぶん溜める。
+  // 毎回ジャンプするより、順番に流すほうが端末にずっと軽い。
+  const grabWhilePlaying=(startIndex,take)=>new Promise((resolve,reject)=>{
+    let n=0, done=false, timer=null;
+    const stop=()=>{ if(done) return; done=true; clearTimeout(timer); try{ v.pause(); }catch(e){} resolve(n); };
+    const arm=()=>{ clearTimeout(timer); timer=setTimeout(stop,25000); };   // 固まらないための保険
+    const onFrame=(now,meta)=>{
+      if(done) return;
+      const t=(meta&&typeof meta.mediaTime==="number")?meta.mediaTime:v.currentTime;
+      if(t+0.002>=(startIndex+n)/FPS){
+        buf[n].g.drawImage(v,0,0,W,H);
+        buf[n].t=t; n++; arm();
+        if(n>=take){ stop(); return; }
+      }
+      if(v.ended){ stop(); return; }
+      v.requestVideoFrameCallback(onFrame);
+    };
+    arm();
+    v.playbackRate=SPEED;
+    v.play().then(()=>{ v.requestVideoFrameCallback(onFrame); })
+            .catch(err=>{ if(!done){ done=true; clearTimeout(timer);
+              reject(new Error("動画を再生できませんでした。（"+err.message+"）")); } });
+  });
+
+  if("requestVideoFrameCallback" in v){
+    // ---- 流しながら撮る方式（こちらが本命）----
+    await jumpTo(0);
+    let next=0;
+    while(next<N){
+      const got=await grabWhilePlaying(next,Math.min(CHUNK,N-next));
+      if(got===0){
+        if(v.ended||next>0) break;
+        throw new Error("動画からコマを取り出せませんでした。");
+      }
+      for(let k=0;k<got;k++){
+        raw.push({t:buf[k].t, ppl:await detect(buf[k].cv)});
+        const i=next+k;
+        if(i%4===0){ show(i,buf[k].t); await tick(); }
+      }
+      next+=got;
+      if(v.ended) break;
+    }
+  }else{
+    // ---- 昔ながらの飛ぶ方式（新しい合図に対応していない端末むけ）----
+    for(let i=0;i<N;i++){
+      await jumpTo(i/FPS);
+      await new Promise(r=>setTimeout(r,60));
+      buf[0].g.drawImage(v,0,0,W,H);
+      raw.push({t:i/FPS, ppl:await detect(buf[0].cv)});
+      if(i%4===0){ show(i,i/FPS); await tick(); }
     }
   }
 
+  if(raw.length<8) throw new Error("コマがほとんど取り出せませんでした。");
   feats=toFeatures(raw);
-  $("status").textContent="完了";
-  $("fill").style.width="100%";
-  $("run").disabled=false; $("loadBtn").disabled=false;
-  finish();
-};
+}
 
 function toFeatures(raw){
   const F=[];
@@ -86,6 +174,10 @@ function toFeatures(raw){
                ankle:["left_ankle","right_ankle"],shoulder:["left_shoulder","right_shoulder"]};
   for(let i=0;i<raw.length;i++){
     const cur=raw[i].ppl, prev=i?raw[i-1].ppl:[];
+    // 実際に取れたコマの間隔で割り、「0.25秒あたりの動き」にそろえる。
+    // ちょうど0.25秒なら1倍のまま＝これまでと同じ数字になる。
+    const dt=i?(raw[i].t-raw[i-1].t):0.25;
+    const k0=Math.min(2,Math.max(0.5,0.25/((dt>0.02&&dt<2)?dt:0.25)));
     const rec={t:+raw[i].t.toFixed(3), n:cur.length,
       scale:+(cur.reduce((s,p)=>s+p.scale,0)/Math.max(cur.length,1)).toFixed(2)};
     for(const k in parts) rec[k]=0;
@@ -109,7 +201,7 @@ function toFeatures(raw){
         s+=Math.hypot(p.kp[nm][0]-best.kp[nm][0],p.kp[nm][1]-best.kp[nm][1])/p.scale; c++; }
       if(c) rec.all+=s/c;
     }
-    if(cnt){ for(const k of ["center","all",...Object.keys(parts)]) rec[k]=+(rec[k]/cnt).toFixed(4); }
+    if(cnt){ for(const k of ["center","all",...Object.keys(parts)]) rec[k]=+(rec[k]/cnt*k0).toFixed(4); }
     F.push(rec);
   }
   return F;
