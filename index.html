@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ラリーカット</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="wrap">
+
+<h1>ラリーカット</h1>
+<p class="sub">試合の動画から、ラリーしているところだけを選び出して続けて再生します。動画はどこにも送られません。すべてこの画面の中だけで動いています。</p>
+
+<div class="card">
+  <p class="step"><b>1</b>動画を選ぶ</p>
+  <input type="file" id="file" accept="video/*">
+  <p class="hint" style="margin:8px 0 0">撮ったままの元ファイルで大丈夫です。長さの制限はありません。</p>
+  <div id="err"></div>
+</div>
+
+<div class="card" id="scanCard" hidden>
+  <p class="step"><b>2</b>解析する</p>
+  <p class="hint" style="margin:0 0 12px">選手の動きを1秒に4コマ読み取ります。<b id="estTime">—</b></p>
+  <div class="row">
+    <button class="btn btn-primary" id="run">解析をはじめる</button>
+    <button class="btn btn-ghost" id="loadBtn">前回の解析を読み込む</button>
+    <input type="file" id="loadFile" accept=".json" hidden>
+    <span class="hint" id="status"></span>
+  </div>
+  <div class="bar"><i id="fill"></i></div>
+</div>
+
+<div class="card" id="playCard" hidden>
+  <p class="step"><b>3</b>ラリーだけ見る</p>
+  <video id="v" playsinline controls></video>
+
+  <div class="row" style="margin-top:12px">
+    <button class="btn btn-ball" id="auto">ラリーだけ連続再生</button>
+    <button class="btn btn-ghost" id="prev">前のラリー</button>
+    <button class="btn btn-ghost" id="next">次のラリー</button>
+    <span class="spd" data-spd><span class="lbl">速さ</span></span>
+    <span class="hint"><kbd>Space</kbd>再生 <kbd>←</kbd><kbd>→</kbd>ラリー移動 <kbd>,</kbd><kbd>.</kbd>速さ</span>
+  </div>
+
+  <div class="row" style="margin-top:10px">
+    <button class="btn btn-primary" id="chkStart">はじめから確かめる</button>
+    <button class="btn btn-ghost" id="chkStop" hidden>確かめるのをやめる</button>
+    <span class="hint" id="chkInfo">1区間ずつ再生して、合っているか判定していきます</span>
+  </div>
+
+  <div class="big-now" id="nowInfo">—</div>
+
+  <div class="tl" id="tl"><div class="cur" id="cur" style="left:0"></div></div>
+  <div class="ticks"><span class="mono">0:00</span><span class="mono" id="tEnd">0:00</span></div>
+
+  <div class="stat">
+    <span>ラリー <b id="nSeg">0</b>本</span>
+    <span>残る長さ <b id="sKeep">0:00</b></span>
+    <span>カット率 <b id="pCut">0%</b></span>
+  </div>
+
+  <ul class="segs" id="segs"></ul>
+</div>
+
+<div class="card fb" id="fbCard" hidden>
+  <p class="step"><b>4</b>使ってみた感想を送る</p>
+  <p class="hint" style="margin:0">30秒で終わります。開発の役に立つので、よければお願いします。</p>
+
+  <label>ラリーの切り取りは合っていましたか</label>
+  <div class="pick" data-q="q1">
+    <button>ばっちり</button><button>だいたい合ってる</button><button>半分くらい</button><button>ぜんぜんダメ</button>
+  </div>
+
+  <label>この道具、また使いたいですか</label>
+  <div class="pick" data-q="q2">
+    <button>毎回使いたい</button><button>たまになら</button><button>使わないと思う</button>
+  </div>
+
+  <label>一番困ったこと・直してほしいこと（自由に）</label>
+  <textarea id="fbFree" placeholder="例：解析が遅い／ラリーが抜ける／どのボタンを押すか分からなかった"></textarea>
+
+  <div class="row" style="margin-top:12px">
+    <button class="btn btn-primary" id="fbCopy">感想をコピーする</button>
+    <span class="hint" id="fbInfo">コピーしたら、LINEなどで作った人に貼り付けて送ってください</span>
+  </div>
+  <textarea id="fbOut" readonly hidden></textarea>
+</div>
+
+<details class="adv">
+<summary>くわしい設定（切れ方を変える・精度を測る・自分用に育てる）</summary>
+
+<div class="card" id="tuneCard" hidden>
+  <p class="step"><b>A</b>細かさを変える</p>
+  <p class="hint" style="margin:0 0 4px">切れ方が気に入らないときだけ触ってください。動かすとすぐ反映されます。解析のやり直しは要りません。</p>
+  <div class="slider">
+    <span style="width:10ch">残す割合</span>
+    <input type="range" id="th" min="15" max="60" step="5" value="30">
+    <span class="v mono" id="thV">30%</span>
+  </div>
+  <p class="hint" style="margin:0 0 6px">動画のうち<b>何割を残すか</b>の目安です。動画ごとに基準を作り直すので、撮り方が違っても効き方が変わりません。<br>
+  <b>右</b>にすると多めに残る（見逃しは減るが余計なところも残る）。<b>左</b>にするとよく切れる（本物も落としやすい）。</p>
+  <div class="slider">
+    <span style="width:10ch">なめらかさ</span>
+    <input type="range" id="sm" min="5" max="25" step="2" value="9">
+    <span class="v mono" id="smV">9</span>
+  </div>
+  <p class="hint" style="margin:0 0 6px"><b>右</b>にするほど、長めに見てから決めるので<b>細切れになりにくい</b>。ただし短いラリーは消えやすい。<br><b>左</b>にするほど、その瞬間だけで決めるので<b>短いラリーも拾う</b>。ただし1本のラリーが2つに割れやすい。</p>
+  <div class="slider">
+    <span style="width:10ch">最短の長さ</span>
+    <input type="range" id="min" min="1.0" max="6.0" step="0.5" value="2.5">
+    <span class="v mono" id="minV">2.5s</span>
+  </div>
+  <p class="hint" style="margin:0 0 6px">これより短い区間は、ラリーと判定されても<b>捨てます</b>。素振りや球拾いの一瞬の動きを拾ってしまったときに効きます。<br>
+  <b>右</b>にするほど余計な短い区間が消えるが、短いラリーも一緒に消える。</p>
+  <div class="slider">
+    <span style="width:10ch">前の余裕</span>
+    <input type="range" id="pad" min="0" max="2.0" step="0.1" value="0.4">
+    <span class="v mono" id="padV">0.4s</span>
+  </div>
+  <p class="hint" style="margin:0 0 6px">サーブの構えを何秒ぶん残すか。</p>
+  <div class="slider">
+    <span style="width:10ch">終わりの余裕</span>
+    <input type="range" id="pad2" min="0" max="3.0" step="0.1" value="1.2">
+    <span class="v mono" id="pad2V">1.2s</span>
+  </div>
+  <p class="hint" style="margin:0">最後の1球が決まったあとを何秒ぶん残すか。<b>球が落ちて勝敗が分かるまで見せたいので、前より長め</b>にしてあります。短いと「どっちが取ったか分からない」ことになります。</p>
+  <div class="guide">
+    <b>直したいことから選ぶ</b>
+    <dl>
+      <dt>ラリーの終わりが切れて、どっちが取ったか分からない</dt>
+      <dd>→「終わりの余裕」を 1.5〜2.0 に上げる</dd>
+      <dt>サーブの出だしが切れている</dt>
+      <dd>→「前の余裕」を 0.8〜1.2 に上げる</dd>
+      <dt>1本のラリーが2つに割れている</dt>
+      <dd>→「なめらかさ」を上げる（9 → 13 → 17）</dd>
+      <dt>ラリーがまるごと抜けている</dt>
+      <dd>→「残す割合」を上げる（30% → 40% → 50%）</dd>
+      <dt>ラリーじゃないところが残りすぎ</dt>
+      <dd>→「残す割合」を下げる（30% → 25% → 20%）</dd>
+      <dt>短いラリーだけ消える</dt>
+      <dd>→「なめらかさ」を下げる（9 → 7 → 5）、または「最短の長さ」を下げる</dd>
+      <dt>2〜3秒の短いゴミが混ざる</dt>
+      <dd>→「最短の長さ」を上げる（2.5 → 3.5）</dd>
+    </dl>
+    <p class="hint" style="margin:10px 0 0">迷ったら「終わりの余裕」→「前の余裕」→「なめらかさ」→「残す割合」の順に、ひとつずつ動かしてください。</p>
+  </div>
+</div>
+
+<div class="card" id="checkCard" hidden>
+  <p class="step"><b>B</b>確かめた結果</p>
+  <p class="hint" style="margin:0">上の「はじめから確かめる」を押すと、画面の下に判定ボタンが出ます。結果はここにたまります。</p>
+  <div class="stat">
+    <span>見た区間 <b id="cDone">0</b>/<span id="cTot">0</span></span>
+    <span>ちょうどいい <b id="cOk">0</b></span>
+    <span>足りない <b id="cPart">0</b></span>
+    <span>間違い <b id="cNg">0</b></span>
+  </div>
+  <div id="chkAdvice"></div>
+</div>
+
+<div class="card" id="outCard" hidden>
+  <p class="step"><b>C</b>書き出す</p>
+  <div class="row">
+    <button class="btn btn-ghost" id="saveScan">解析結果を保存（次回すぐ開ける）</button>
+    <button class="btn btn-ghost" id="copyList">区間リストをコピー</button>
+    <button class="btn btn-ghost" id="saveMarks" disabled>判定を書き出す</button>
+    <span class="hint" id="outInfo"></span>
+  </div>
+  <textarea id="out" readonly></textarea>
+  <div class="note">動画そのものの書き出しはまだ入っていません。いまは「どこを見ればいいか」が分かるところまでです。</div>
+</div>
+
+<div class="card" id="growCard" hidden>
+  <p class="step"><b>D</b>自分用に育てる</p>
+  <p class="hint" style="margin:0 0 10px">判定器が外したところだけ「ここがラリー」と教えると、<b>この端末の中だけ</b>で自分の撮り方に合わせて調整されます。動画も数字もどこにも送られません。</p>
+
+  <div class="stat" style="margin-top:6px">
+    <span>いま使っている判定器 <b id="gWhich">土台</b></span>
+    <span>教えた動画 <b id="gVideos">0</b>本</span>
+    <span>教えた長さ <b id="gMin">0:00</b></span>
+  </div>
+
+  <div class="row" style="margin-top:14px">
+    <button class="btn btn-ball" id="fixStart" disabled>間違いを直す</button>
+    <button class="btn btn-primary" id="learn" disabled>この動画を覚えさせる</button>
+    <span class="hint" id="gInfo">まず上の「はじめから確かめる」を一通りやってください</span>
+  </div>
+
+  <div class="row" style="margin-top:10px">
+    <button class="btn btn-ghost" id="gSave">自分用を書き出す</button>
+    <button class="btn btn-ghost" id="gLoadBtn">自分用を読み込む</button>
+    <input type="file" id="gLoadFile" accept=".json" hidden>
+    <button class="btn btn-ghost" id="gReset">土台に戻す</button>
+  </div>
+  <div class="note" id="gNote" hidden></div>
+</div>
+
+</details>
+
+<canvas id="work"></canvas>
+</div>
+
+<div class="fixbar" id="fixBar" hidden>
+  <div class="inner">
+    <div class="who">
+      <div id="fixNow">—</div>
+      <div class="hint" id="fixTip" style="margin:0">ラリーの間だけ押しっぱなし。何回でも足せます</div>
+    </div>
+    <div class="hold" id="fixHold">スペースを押しっぱなし</div>
+    <button class="btn btn-ghost" id="fixNone">ラリーなし</button>
+    <button class="btn btn-ghost" id="fixReplay">もう一度見る</button>
+    <button class="btn btn-primary" id="fixNext">次へ</button>
+    <span class="prog mono" id="fixProg">0 / 0</span>
+  </div>
+</div>
+
+<div class="chkbar" id="chkBar" hidden>
+  <div class="inner">
+    <div class="who">
+      <div id="chkNow">—</div>
+      <div class="hint" id="chkTip" style="margin:0"></div>
+    </div>
+    <button class="btn btn-ghost" id="ok" style="border-color:var(--ok);color:var(--ok)">1　ちょうどいい</button>
+    <button class="btn btn-ghost" id="part" style="border-color:var(--warn);color:var(--warn)">2　足りない</button>
+    <button class="btn btn-ghost" id="ng" style="border-color:var(--ng);color:var(--ng)">3　間違い</button>
+    <button class="btn btn-ghost" id="replay">R　もう一度</button>
+    <span class="spd" data-spd><span class="lbl">速さ</span></span>
+    <span class="prog mono" id="chkProg">0 / 0</span>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/pose-detection@2.1.3/dist/pose-detection.min.js"></script>
+
+<script src="model.js"></script>
+<script src="score.js"></script>
+<script src="app.js"></script>
+<script src="grow.js"></script>
+</body>
+</html>
