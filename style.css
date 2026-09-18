@@ -24,6 +24,24 @@ h1{margin:0 0 3px;font-size:26px;font-weight:700}
 .bar i{display:block;height:100%;width:0;background:var(--blue);transition:width .2s}
 .hint{color:var(--ink2);font-size:13px}
 video{width:100%;max-width:100%;display:block;background:#000;border-radius:10px}
+/* 撮り方のイラスト */
+details.tips{margin-top:12px;border:1px solid var(--line);border-radius:10px;background:var(--panel2)}
+details.tips>summary{cursor:pointer;padding:11px 14px;font-size:13.5px;font-weight:600;color:var(--ink);list-style:none}
+details.tips>summary::-webkit-details-marker{display:none}
+details.tips>summary::before{content:"\25B8 ";color:var(--blue)}
+details.tips[open]>summary::before{content:"\25BE "}
+.tipgrid{display:grid;grid-template-columns:1fr 1fr;gap:12px;padding:0 14px 14px}
+.tiphead{grid-column:1/-1;font-size:12.5px;color:var(--ink2);margin:4px 0 -4px}
+.tipgrid figure{margin:0}
+.tipgrid svg{width:100%;height:auto;display:block;border-radius:8px}
+.tipcap{font-size:12.5px;line-height:1.55;margin-top:6px;color:var(--ink2)}
+.tipcap b{display:block;font-size:13px;margin-bottom:1px}
+.ngc{color:var(--ng)}.okc{color:var(--ok)}
+.warnbox{background:var(--warn-soft);border:1px solid var(--warn);border-radius:10px;
+  padding:11px 13px;font-size:13px;line-height:1.65;margin-bottom:12px}
+.warnbox b{color:var(--warn)}
+.tipwhy{grid-column:1/-1;font-size:12.5px;color:var(--ink2);background:var(--ground);
+  border:1px solid var(--line);border-radius:8px;padding:10px 12px;margin-top:2px}
 /* 解析中は「3ラリーだけ見る」の中身を隠し、映像だけ見せる。
    画面に出ていない動画はコマを出してくれない端末があるため、隠さず表示しておく */
 #playCard.scanning > *:not(#playStep):not(video){display:none}

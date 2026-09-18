@@ -17,6 +17,100 @@
   <p class="step"><b>1</b>動画を選ぶ</p>
   <input type="file" id="file" accept="video/*">
   <p class="hint" style="margin:8px 0 0">撮ったままの元ファイルで大丈夫です。画質は落ちません。<br>4Kや長い動画は、選んだあと読み込みに数分かかることがあります（iPhoneが形式を変換するため）。そのまま待ってください。</p>
+
+  <details class="tips" open>
+    <summary>うまく切り取れる撮り方</summary>
+    <div class="tipgrid">
+
+      <p class="tiphead">画面にこう写っていればOK</p>
+
+      <figure>
+        <svg viewBox="0 0 200 124" role="img" aria-label="悪い例。手前の選手が大きすぎて相手が隠れている画面">
+          <rect x="3" y="3" width="194" height="118" rx="7" fill="#0E1319" stroke="#2C3846"/>
+          <path d="M52 72 H148 L166 92 H34 Z" fill="#1B3550" stroke="#5C9BE0" stroke-width="1.5"/>
+          <circle cx="112" cy="32" r="7" fill="#6D7F95"/>
+          <rect x="103" y="40" width="18" height="20" rx="5" fill="#6D7F95"/>
+          <circle cx="100" cy="48" r="13" fill="#C8D4E2"/>
+          <rect x="83" y="62" width="34" height="37" rx="9" fill="#C8D4E2"/>
+          <rect x="88" y="98" width="8" height="21" rx="4" fill="#C8D4E2"/>
+          <rect x="104" y="98" width="8" height="21" rx="4" fill="#C8D4E2"/>
+          <ellipse cx="114" cy="36" rx="16" ry="13" fill="none" stroke="#F0745C" stroke-width="1.6" stroke-dasharray="4 3"/>
+        </svg>
+        <p class="tipcap"><b class="ngc">&#10005; 相手が隠れている</b>手前の選手が大きすぎて、相手が陰に入っています。これだと切り取りが外れます。</p>
+      </figure>
+
+      <figure>
+        <svg viewBox="0 0 200 124" role="img" aria-label="良い例。台の両側に選手が1人ずつ全身で写っている画面">
+          <rect x="3" y="3" width="194" height="118" rx="7" fill="#0E1319" stroke="#2C3846"/>
+          <path d="M52 66 H148 L166 88 H34 Z" fill="#1B3550" stroke="#5C9BE0" stroke-width="1.5"/>
+          <circle cx="72" cy="19" r="7.5" fill="#9FB0C4"/>
+          <rect x="63" y="28" width="18" height="20" rx="5" fill="#9FB0C4"/>
+          <rect x="66" y="47" width="6" height="12" rx="3" fill="#9FB0C4"/>
+          <rect x="75" y="47" width="6" height="12" rx="3" fill="#9FB0C4"/>
+          <circle cx="130" cy="64" r="10" fill="#C8D4E2"/>
+          <rect x="117" y="75" width="26" height="29" rx="7" fill="#C8D4E2"/>
+          <rect x="121" y="103" width="7" height="16" rx="3.5" fill="#C8D4E2"/>
+          <rect x="133" y="103" width="7" height="16" rx="3.5" fill="#C8D4E2"/>
+        </svg>
+        <p class="tipcap"><b class="okc">&#9711; 2人とも全身が見える</b>台をはさんで1人ずつ。相手が小さくても、重なっていなければ大丈夫です。</p>
+      </figure>
+
+      <p class="tiphead">そのためにカメラを高くする（横から見た図）</p>
+
+      <figure>
+        <svg viewBox="0 0 200 124" role="img" aria-label="悪い例。カメラが低く、手前の選手で視線がさえぎられる">
+          <rect x="3" y="3" width="194" height="118" rx="7" fill="#0E1319" stroke="#2C3846"/>
+          <line x1="10" y1="104" x2="190" y2="104" stroke="#2C3846" stroke-width="2"/>
+          <rect x="76" y="72" width="72" height="4" fill="#5C9BE0"/>
+          <rect x="80" y="76" width="3" height="28" fill="#3A5570"/>
+          <rect x="141" y="76" width="3" height="28" fill="#3A5570"/>
+          <rect x="110" y="62" width="2.5" height="10" fill="#8998AB"/>
+          <circle cx="58" cy="60" r="7" fill="#C8D4E2"/>
+          <rect x="51" y="68" width="14" height="22" rx="5" fill="#C8D4E2"/>
+          <rect x="53" y="89" width="4.5" height="15" rx="2" fill="#C8D4E2"/>
+          <rect x="60" y="89" width="4.5" height="15" rx="2" fill="#C8D4E2"/>
+          <circle cx="164" cy="60" r="7" fill="#9FB0C4"/>
+          <rect x="157" y="68" width="14" height="22" rx="5" fill="#9FB0C4"/>
+          <rect x="159" y="89" width="4.5" height="15" rx="2" fill="#9FB0C4"/>
+          <rect x="166" y="89" width="4.5" height="15" rx="2" fill="#9FB0C4"/>
+          <rect x="16" y="76" width="17" height="11" rx="2.5" fill="#E8C25C"/>
+          <circle cx="24.5" cy="81.5" r="3" fill="#0E1319"/>
+          <line x1="24.5" y1="87" x2="24.5" y2="104" stroke="#E8C25C" stroke-width="2"/>
+          <line x1="34" y1="80" x2="150" y2="72" stroke="#F0745C" stroke-width="1.6" stroke-dasharray="5 3"/>
+          <path d="M50 70 l14 14 M64 70 l-14 14" stroke="#F0745C" stroke-width="2.6" stroke-linecap="round"/>
+        </svg>
+        <p class="tipcap"><b class="ngc">&#10005; 低い位置</b>手前の選手で視線がさえぎられ、相手まで届きません。</p>
+      </figure>
+
+      <figure>
+        <svg viewBox="0 0 200 124" role="img" aria-label="良い例。カメラが高く、手前の選手の頭越しに相手まで見通せる">
+          <rect x="3" y="3" width="194" height="118" rx="7" fill="#0E1319" stroke="#2C3846"/>
+          <line x1="10" y1="104" x2="190" y2="104" stroke="#2C3846" stroke-width="2"/>
+          <rect x="76" y="72" width="72" height="4" fill="#5C9BE0"/>
+          <rect x="80" y="76" width="3" height="28" fill="#3A5570"/>
+          <rect x="141" y="76" width="3" height="28" fill="#3A5570"/>
+          <rect x="110" y="62" width="2.5" height="10" fill="#8998AB"/>
+          <circle cx="58" cy="60" r="7" fill="#C8D4E2"/>
+          <rect x="51" y="68" width="14" height="22" rx="5" fill="#C8D4E2"/>
+          <rect x="53" y="89" width="4.5" height="15" rx="2" fill="#C8D4E2"/>
+          <rect x="60" y="89" width="4.5" height="15" rx="2" fill="#C8D4E2"/>
+          <circle cx="164" cy="60" r="7" fill="#9FB0C4"/>
+          <rect x="157" y="68" width="14" height="22" rx="5" fill="#9FB0C4"/>
+          <rect x="159" y="89" width="4.5" height="15" rx="2" fill="#9FB0C4"/>
+          <rect x="166" y="89" width="4.5" height="15" rx="2" fill="#9FB0C4"/>
+          <rect x="16" y="26" width="17" height="11" rx="2.5" fill="#E8C25C"/>
+          <circle cx="24.5" cy="31.5" r="3" fill="#0E1319"/>
+          <line x1="24.5" y1="37" x2="24.5" y2="104" stroke="#E8C25C" stroke-width="2"/>
+          <line x1="34" y1="33" x2="158" y2="56" stroke="#4FC98C" stroke-width="1.6" stroke-dasharray="5 3"/>
+          <path d="M152 44 l5 6 l11 -14" fill="none" stroke="#4FC98C" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+        <p class="tipcap"><b class="okc">&#9711; 高い位置</b>1〜2段上の席や、三脚を高くするだけで届きます。</p>
+      </figure>
+
+      <p class="tipwhy"><b>なぜ大事か</b>：この道具は「2人が同時に動いているか」を手がかりにラリーを見分けています。相手が隠れていると手がかりが半分になり、ラリーを取りこぼしたり、球拾いを混ぜたりします。<br>横からでなくて構いません。<b>2人が重ならずに写っていること</b>だけが条件です。</p>
+
+    </div>
+  </details>
   <div id="err"></div>
 </div>
 
@@ -34,6 +128,7 @@
 
 <div class="card" id="playCard" hidden>
   <p class="step" id="playStep"><b>3</b>ラリーだけ見る</p>
+  <div class="warnbox" id="warnShot" hidden></div>
   <video id="v" playsinline controls></video>
 
   <div class="row" style="margin-top:12px">

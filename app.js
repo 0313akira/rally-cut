@@ -55,6 +55,8 @@ $("run").onclick=async()=>{
   try{
     await runScan();
     $("status").textContent="映像を戻しています…";
+    freeScanMemory();
+    await new Promise(r=>setTimeout(r,300));
     await reloadVideo();
     $("status").textContent="完了";
     $("fill").style.width="100%";
@@ -67,13 +69,26 @@ $("run").onclick=async()=>{
       '動画を短く切るか、パソコンで開いてみてください。</div>';
     $("status").textContent="止まりました";
   }
-  try{ v.pause(); v.playbackRate=1; v.currentTime=0; }catch(e){}
+  freeScanMemory();
+  try{ v.pause(); v.playbackRate=1; v.currentTime=0; v.muted=false; }catch(e){}
   $("playCard").classList.remove("scanning");
   $("playStep").innerHTML='<b>3</b>ラリーだけ見る';
   v.setAttribute("controls","");
   if(!feats) $("playCard").hidden=true;
   $("run").disabled=false; $("loadBtn").disabled=false;
 };
+
+let scanDet=null, scanBuf=null;
+/* 姿勢検出は画面用の記憶（GPU）を大量に抱える。返さないままだと、
+   端末によっては動画の絵を出せなくなる（音だけ鳴って映像が止まる） */
+function freeScanMemory(){
+  try{ if(scanDet&&scanDet.dispose) scanDet.dispose(); }catch(e){}
+  scanDet=null;
+  try{ if(window.tf&&tf.disposeVariables) tf.disposeVariables(); }catch(e){}
+  try{ if(window.tf&&tf.engine&&tf.engine().reset) tf.engine().reset(); }catch(e){}
+  if(scanBuf){ for(const b of scanBuf){ try{ b.cv.width=1; b.cv.height=1; }catch(e){} } scanBuf=null; }
+  try{ work.width=1; work.height=1; }catch(e){}
+}
 
 const SPEED=2;      // 解析中に動画を流す速さ（倍速）
 const CHUNK=20;     // 一度に溜めるコマ数（＝5秒ぶん）
@@ -91,6 +106,7 @@ async function runScan(){
   try{
     det=await poseDetection.createDetector(poseDetection.SupportedModels.MoveNet,
       {modelType:poseDetection.movenet.modelType.MULTIPOSE_LIGHTNING});
+    scanDet=det;
   }catch(err){
     throw new Error("判定モデルを読み込めませんでした。ネットにつながった状態で開いてください。（"+err.message+"）");
   }
@@ -111,6 +127,7 @@ async function runScan(){
     const cv=document.createElement("canvas"); cv.width=W; cv.height=H;
     buf.push({cv:cv, g:cv.getContext("2d",{willReadFrequently:true}), t:0});
   }
+  scanBuf=buf;
 
   const show=(i,at)=>{
     const done=(i+1)/N, el=(performance.now()-t0)/1000;
@@ -274,6 +291,15 @@ $("loadFile").onchange=e=>{
 function finish(){
   prob=RallyModel.predict(feats,activeModel());
   times=feats.map(f=>f.t);
+  // 相手がほとんど写っていない動画は、そのままだと必ず外れる。理由を先に伝える
+  const two=feats.filter(f=>f.n>=2).length/Math.max(1,feats.length);
+  const w=$("warnShot");
+  w.hidden = two>=0.20;
+  if(!w.hidden) w.innerHTML='<b>相手の選手がほとんど写っていません</b>（2人そろって写っていたのは'
+    +Math.round(two*100)+'%）。この道具は「2人が同時に動いているか」でラリーを見分けているので、'
+    +'このままだとラリーを取りこぼしたり、球拾いが混ざったりします。'
+    +'次はカメラを高くして、2人が重ならずに写るように撮ってみてください'
+    +'（撮り方の図は一番上の「うまく切り取れる撮り方」にあります）。';
   $("playCard").hidden=false; $("fbCard").hidden=false;
   $("tuneCard").hidden=false; $("checkCard").hidden=false; $("outCard").hidden=false;
   recompute();
