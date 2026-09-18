@@ -4,14 +4,17 @@ const fmt=s=>Math.floor(Math.max(0,s)/60)+":"+String(Math.floor(Math.max(0,s)%60
 const tick=()=>new Promise(r=>setTimeout(r,0));
 const v=$("v"), work=$("work");
 let duration=0, fileName="", feats=null, prob=null, times=null;
+let videoFile=null, videoURL="";
 let segs=[], blocks=[], mode="free", curIdx=-1, stopAt=null;
 let chk={on:false,i:0,marks:[]};
 
 /* ---------- 1. 動画 ---------- */
 $("file").onchange=e=>{
   const f=e.target.files[0]; if(!f) return;
-  fileName=f.name; $("err").innerHTML="";
-  v.src=URL.createObjectURL(f);
+  fileName=f.name; videoFile=f; $("err").innerHTML="";
+  if(videoURL) URL.revokeObjectURL(videoURL);
+  videoURL=URL.createObjectURL(f);
+  v.src=videoURL;
   v.onloadedmetadata=()=>{
     duration=v.duration; $("tEnd").textContent=fmt(duration);
     feats=null; prob=null; segs=[]; chk={on:false,i:0,marks:[]};
@@ -23,6 +26,24 @@ $("file").onchange=e=>{
   };
 };
 
+/* 解析では動画を何十回も再生・停止するので、そのあと再生がぎこちなくなる端末がある。
+   一度読み込み直して、まっさらな状態にしてから「ラリーだけ見る」に渡す */
+function reloadVideo(){
+  return new Promise(r=>{
+    if(!videoFile){ r(); return; }
+    let done=false; const ok=()=>{ if(!done){ done=true; r(); } };
+    v.onloadedmetadata=null;                 // 解析結果を消さないよう、選び直しの処理は外しておく
+    try{ v.pause(); }catch(e){}
+    v.playbackRate=1;
+    if(videoURL) URL.revokeObjectURL(videoURL);
+    videoURL=URL.createObjectURL(videoFile);
+    v.addEventListener("loadeddata",ok,{once:true});
+    setTimeout(ok,5000);                     // 合図が来ない端末むけの保険
+    v.src=videoURL;
+    v.load();
+  });
+}
+
 /* ---------- 2. 解析 ---------- */
 const FPS=4;
 const NAME=i=>["nose","left_eye","right_eye","left_ear","right_ear","left_shoulder","right_shoulder",
@@ -33,6 +54,8 @@ $("run").onclick=async()=>{
   $("run").disabled=true; $("loadBtn").disabled=true; $("err").innerHTML="";
   try{
     await runScan();
+    $("status").textContent="映像を戻しています…";
+    await reloadVideo();
     $("status").textContent="完了";
     $("fill").style.width="100%";
     finish();
@@ -44,7 +67,11 @@ $("run").onclick=async()=>{
       '動画を短く切るか、パソコンで開いてみてください。</div>';
     $("status").textContent="止まりました";
   }
-  try{ v.pause(); v.playbackRate=1; }catch(e){}
+  try{ v.pause(); v.playbackRate=1; v.currentTime=0; }catch(e){}
+  $("playCard").classList.remove("scanning");
+  $("playStep").innerHTML='<b>3</b>ラリーだけ見る';
+  v.setAttribute("controls","");
+  if(!feats) $("playCard").hidden=true;
   $("run").disabled=false; $("loadBtn").disabled=false;
 };
 
@@ -71,6 +98,12 @@ async function runScan(){
   const W=512, H=Math.round(W*v.videoHeight/v.videoWidth);
   work.width=W; work.height=H;
   const N=Math.floor(duration*FPS), raw=[], t0=performance.now();
+
+  // 映像を画面に出しておく。隠れたままだと絵を取り出せない端末があるうえ、
+  // 動いているかどうかを自分の目で確かめられる
+  $("playCard").hidden=false; $("playCard").classList.add("scanning");
+  $("playStep").innerHTML='<b>2</b>読み取り中の映像 <span class="hint">（動いていれば正常です）</span>';
+  v.removeAttribute("controls");
 
   // 絵をためておく入れ物。毎回この20枚を使い回すので、動画が長くてもメモリが増えない
   const buf=[];
@@ -166,6 +199,18 @@ async function runScan(){
 
   if(raw.length<8) throw new Error("コマがほとんど取り出せませんでした。");
   feats=toFeatures(raw);
+
+  // 取り出した中身の点検。ここで気づかないと「ラリー1本」などの変な結果になる
+  const withPeople=feats.filter(f=>f.n>0).length;
+  const moving=feats.filter(f=>f.all>0.001).length;
+  if(withPeople < feats.length*0.05){
+    feats=null;
+    throw new Error("選手を見つけられませんでした。台全体が横から写っている試合の動画でお試しください。");
+  }
+  if(moving < feats.length*0.02){
+    feats=null;
+    throw new Error("動画のコマが進んでいません（同じ場面ばかり読み取っています）。この端末では動画を読み取れないようです。");
+  }
 }
 
 function toFeatures(raw){

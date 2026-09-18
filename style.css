@@ -24,6 +24,10 @@ h1{margin:0 0 3px;font-size:26px;font-weight:700}
 .bar i{display:block;height:100%;width:0;background:var(--blue);transition:width .2s}
 .hint{color:var(--ink2);font-size:13px}
 video{width:100%;max-width:100%;display:block;background:#000;border-radius:10px}
+/* 解析中は「3ラリーだけ見る」の中身を隠し、映像だけ見せる。
+   画面に出ていない動画はコマを出してくれない端末があるため、隠さず表示しておく */
+#playCard.scanning > *:not(#playStep):not(video){display:none}
+#playCard.scanning video{pointer-events:none}
 canvas#work{display:none}
 .tl{position:relative;height:34px;border-radius:8px;background:var(--panel2);
   border:1px solid var(--line);overflow:hidden;margin-top:14px;cursor:pointer}
