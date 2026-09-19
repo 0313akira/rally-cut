@@ -264,7 +264,15 @@
     <span class="hint" id="outInfo"></span>
   </div>
   <textarea id="out" readonly></textarea>
-  <div class="note">動画そのものの書き出しはまだ入っていません。いまは「どこを見ればいいか」が分かるところまでです。</div>
+
+  <div class="row" style="margin-top:14px">
+    <button class="btn btn-ball" id="exportVideo">ラリーだけの動画を書き出す</button>
+    <button class="btn btn-ghost" id="exCancel" hidden>やめる</button>
+    <span class="hint" id="exInfo"></span>
+  </div>
+  <div class="bar"><i id="exFill"></i></div>
+  <div class="note">実際に最初から最後まで再生しながら録ります。<b>残る長さと同じだけ時間がかかります</b>（1分ぶんなら1分）。
+  終わるまで画面を消さず、他のアプリに移らないでください。</div>
 </div>
 
 <div class="card" id="growCard" hidden>

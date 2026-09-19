@@ -603,5 +603,122 @@ $("saveMarks").onclick=()=>{
   a.download=(fileName.replace(/\.[^.]+$/,""))+"_判定.json";
   document.body.appendChild(a); a.click(); a.remove();
 };
+
+/* ---------- 7. ラリーだけの動画を書き出す ---------- */
+/* 仕組み：区間を順番に再生し、その絵をキャンバスに写して録画する。
+   動画を作り直す部品はブラウザに無いので、いったん「見ながら録る」しかない。 */
+let audioCtx=null, audioOut=null, exporting=false, cancelExport=false;
+
+async function setupAudio(){
+  if(audioOut!==null) return audioOut;
+  try{
+    const AC=window.AudioContext||window.webkitAudioContext;
+    if(!AC){ audioOut=false; return false; }
+    audioCtx=new AC();
+    if(audioCtx.state==="suspended") await audioCtx.resume();
+    if(audioCtx.state!=="running"){ audioOut=false; return false; }   // 音は諦めて映像だけ録る
+    const src=audioCtx.createMediaElementSource(v);
+    const dest=audioCtx.createMediaStreamDestination();
+    src.connect(dest);
+    src.connect(audioCtx.destination);   // ふつうの再生でも音が出るようにしておく
+    audioOut=dest;
+  }catch(e){ audioOut=false; }
+  return audioOut;
+}
+function pickType(){
+  const list=["video/mp4","video/webm;codecs=vp9,opus","video/webm;codecs=vp8,opus","video/webm"];
+  for(const t of list) if(window.MediaRecorder && MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(t)) return t;
+  return "";
+}
+const seekTo=t=>new Promise(r=>{
+  let ok=false; const fin=()=>{ if(!ok){ ok=true; r(); } };
+  v.addEventListener("seeked",fin,{once:true});
+  setTimeout(fin,3000);
+  v.currentTime=Math.max(0,Math.min(t,duration-0.05));
+});
+
+$("exportVideo").onclick=async()=>{
+  if(exporting) return;
+  if(!segs.length){ $("exInfo").textContent="先に解析してください"; return; }
+  if(!window.MediaRecorder || !HTMLCanvasElement.prototype.captureStream){
+    $("exInfo").innerHTML='<b style="color:var(--ng)">この端末では動画の書き出しができません。</b>パソコンでお試しください。';
+    return;
+  }
+  exporting=true; cancelExport=false;
+  $("exportVideo").disabled=true; $("exCancel").hidden=false;
+  $("exInfo").textContent="準備中…";
+
+  const total=segs.reduce((s,[a,b])=>s+(b-a),0);
+  const W=Math.min(1280, v.videoWidth||1280);
+  const H=Math.round(W*(v.videoHeight||720)/(v.videoWidth||1280));
+  const cv=document.createElement("canvas"); cv.width=W; cv.height=H;
+  const g=cv.getContext("2d");
+  const stream=cv.captureStream(30);
+
+  const au=await setupAudio();
+  if(au){ try{ au.stream.getAudioTracks().forEach(tr=>stream.addTrack(tr)); }catch(e){} }
+
+  const mime=pickType();
+  let rec;
+  try{ rec=new MediaRecorder(stream, mime?{mimeType:mime,videoBitsPerSecond:5000000}:undefined); }
+  catch(e){ try{ rec=new MediaRecorder(stream); }catch(e2){
+    $("exInfo").textContent="この端末では書き出せませんでした（"+e2.message+"）";
+    $("exportVideo").disabled=false; $("exCancel").hidden=true; exporting=false; return; } }
+  const parts=[];
+  rec.ondataavailable=e=>{ if(e.data && e.data.size) parts.push(e.data); };
+  const stopped=new Promise(r=>{ rec.onstop=r; });
+
+  const wasMuted=v.muted, wasRate=v.playbackRate;
+  v.muted=false; v.playbackRate=1; mode="free"; stopAt=null;
+  let drawing=true;
+  const draw=()=>{ if(!drawing) return; try{ g.drawImage(v,0,0,W,H); }catch(e){} requestAnimationFrame(draw); };
+  await seekTo(segs[0][0]);
+  requestAnimationFrame(draw);
+
+  const t0=performance.now();
+  let written=0;
+  rec.start(1000);
+  try{
+    for(let i=0;i<segs.length;i++){
+      if(cancelExport) break;
+      const [a0,b0]=segs[i];
+      if(i>0){ try{ rec.pause(); }catch(e){} await seekTo(a0); try{ rec.resume(); }catch(e){} }
+      try{ await v.play(); }catch(e){}
+      await new Promise(r=>{
+        const watch=()=>{
+          if(cancelExport || v.currentTime>=b0-0.02 || v.ended){ r(); return; }
+          requestAnimationFrame(watch);
+        };
+        watch();
+      });
+      v.pause();
+      written+=b0-a0;
+      const el=(performance.now()-t0)/1000;
+      const left=written>0.5? Math.round(el*(total-written)/written) : null;
+      $("exInfo").textContent=`書き出し中… ${i+1}/${segs.length}本`+(left!==null?`　のこり約${fmt(left)}`:"");
+      $("exFill").style.width=Math.round(100*written/total)+"%";
+    }
+  }finally{
+    drawing=false;
+    try{ rec.stop(); }catch(e){}
+    await stopped;
+    v.pause(); v.muted=wasMuted; v.playbackRate=wasRate;
+    $("exportVideo").disabled=false; $("exCancel").hidden=true; exporting=false;
+  }
+
+  if(cancelExport){ $("exInfo").textContent="やめました"; $("exFill").style.width="0"; return; }
+  const type=((rec.mimeType||mime||"video/webm")).split(";")[0];
+  const ext=type.indexOf("mp4")>=0 ? "mp4" : "webm";
+  const blob=new Blob(parts,{type});
+  if(!blob.size){ $("exInfo").textContent="中身が空でした。パソコンでお試しください。"; return; }
+  const url=URL.createObjectURL(blob);
+  const link=document.createElement("a");
+  link.href=url; link.download=(fileName.replace(/\.[^.]+$/,""))+"_ラリーだけ."+ext;
+  document.body.appendChild(link); link.click(); link.remove();
+  setTimeout(()=>URL.revokeObjectURL(url),120000);
+  $("exInfo").textContent=`できました（${fmt(total)}・${(blob.size/1048576).toFixed(0)}MB・${ext.toUpperCase()}）`;
+};
+$("exCancel").onclick=()=>{ cancelExport=true; };
+
 $("copyList").onclick=()=>navigator.clipboard.writeText($("out").value)
   .then(()=>$("outInfo").textContent="コピーしました");
