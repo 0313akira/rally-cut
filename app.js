@@ -19,7 +19,7 @@ $("file").onchange=e=>{
     duration=v.duration; $("tEnd").textContent=fmt(duration);
     feats=null; prob=null; segs=[]; chk={on:false,i:0,marks:[]};
     $("scanCard").hidden=false;
-    $("playCard").hidden=true; $("fbCard").hidden=true; $("tuneCard").hidden=true; $("checkCard").hidden=true; $("outCard").hidden=true;
+    $("playCard").hidden=true; $("tuneCard").hidden=true; $("checkCard").hidden=true; $("outCard").hidden=true;
     const mins=Math.max(1,Math.round(duration/60*1.2));
     $("estTime").textContent=`この動画（${fmt(duration)}）だと、スマホで${mins}分ぐらい、パソコンならその半分ほどです。`;
     $("status").textContent=""; $("fill").style.width="0";
@@ -300,7 +300,7 @@ function finish(){
     +'このままだとラリーを取りこぼしたり、球拾いが混ざったりします。'
     +'次はカメラを高くして、2人が重ならずに写るように撮ってみてください'
     +'（撮り方の図は一番上の「うまく切り取れる撮り方」にあります）。';
-  $("playCard").hidden=false; $("fbCard").hidden=false;
+  $("playCard").hidden=false;
   $("tuneCard").hidden=false; $("checkCard").hidden=false; $("outCard").hidden=false;
   recompute();
   if(typeof refreshGrow==="function") refreshGrow();
@@ -539,36 +539,6 @@ document.addEventListener("keydown",e=>{
   else if(e.key==="."){ e.preventDefault(); stepSpeed(1); }
 });
 
-/* ---------- 4. 感想 ---------- */
-const fbPick={};
-document.querySelectorAll(".fb .pick").forEach(box=>{
-  box.querySelectorAll("button").forEach(b=>b.onclick=()=>{
-    box.querySelectorAll("button").forEach(x=>x.classList.remove("on"));
-    b.classList.add("on"); fbPick[box.dataset.q]=b.textContent;
-  });
-});
-$("fbCopy").onclick=()=>{
-  const keep=segs.reduce((s,[a,b])=>s+(b-a),0);
-  const n=v=>chk.marks.filter(x=>x===v).length;
-  const done=n(0)+n(0.5)+n(1);
-  const lines=[
-    "■ ラリーカット 使用報告",
-    `切り取りは合っていたか： ${fbPick.q1||"（未回答）"}`,
-    `また使いたいか： ${fbPick.q2||"（未回答）"}`,
-    `困ったこと： ${$("fbFree").value.trim()||"（なし）"}`,
-    "",
-    `動画の長さ： ${fmt(duration)}`,
-    `見つけたラリー： ${segs.length}本 / 残り ${fmt(keep)} / カット率 ${duration?Math.round(100-100*keep/duration):0}%`,
-    `設定： 残す割合${$("th").value}% なめらかさ${$("sm").value} 最短${$("min").value}秒 前${$("pad").value}秒 終わり${$("pad2").value}秒`,
-    `判定器： ${(typeof store!=="undefined"&&store&&store.coef)?"自分用":"土台"}`,
-    done? `確かめた結果： ${done}区間中 ちょうどいい${n(1)} 足りない${n(0.5)} 間違い${n(0)}` : "確かめた結果： まだ確かめていません"
-  ];
-  const text=lines.join("\n");
-  $("fbOut").hidden=false; $("fbOut").value=text;
-  navigator.clipboard.writeText(text)
-    .then(()=>$("fbInfo").textContent="コピーしました。LINEなどに貼り付けて送ってください")
-    .catch(()=>$("fbInfo").textContent="下の枠を選んでコピーしてください");
-};
 
 /* ---------- 6. 書き出し ---------- */
 $("saveScan").onclick=()=>{

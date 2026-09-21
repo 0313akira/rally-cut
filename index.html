@@ -10,6 +10,11 @@
 <body>
 <div class="wrap">
 
+<nav class="tabs">
+  <a href="index.html" class="on">ラリーを切り取る</a>
+  <a href="record.html">ラリーを記録する</a>
+</nav>
+
 <h1>ラリーカット</h1>
 <p class="sub">試合の動画から、ラリーしているところだけを選び出して続けて再生します。動画はどこにも送られません。すべてこの画面の中だけで動いています。</p>
 
@@ -159,32 +164,70 @@
   <ul class="segs" id="segs"></ul>
 </div>
 
-<div class="card fb" id="fbCard" hidden>
-  <p class="step"><b>4</b>使ってみた感想を送る</p>
-  <p class="hint" style="margin:0">30秒で終わります。開発の役に立つので、よければお願いします。</p>
-
-  <label>ラリーの切り取りは合っていましたか</label>
-  <div class="pick" data-q="q1">
-    <button>ばっちり</button><button>だいたい合ってる</button><button>半分くらい</button><button>ぜんぜんダメ</button>
+<div class="card" id="outCard" hidden>
+  <p class="step"><b>4</b>ラリーだけの動画にする</p>
+  <p class="hint" style="margin:0 0 12px">切れ方が気に入らないときは、先に下の「<b>5 自分用に育てる</b>」をどうぞ。</p>
+  <div class="row">
+    <button class="btn btn-ghost" id="saveScan">解析結果を保存（次回すぐ開ける）</button>
+    <button class="btn btn-ghost" id="copyList">区間リストをコピー</button>
+    <button class="btn btn-ghost" id="saveMarks" disabled>判定を書き出す</button>
+    <span class="hint" id="outInfo"></span>
   </div>
+  <textarea id="out" readonly></textarea>
 
-  <label>この道具、また使いたいですか</label>
-  <div class="pick" data-q="q2">
-    <button>毎回使いたい</button><button>たまになら</button><button>使わないと思う</button>
+  <div class="row" style="margin-top:14px">
+    <button class="btn btn-ball" id="exportVideo">ラリーだけの動画を書き出す</button>
+    <button class="btn btn-ghost" id="exCancel" hidden>やめる</button>
+    <span class="hint" id="exInfo"></span>
   </div>
-
-  <label>一番困ったこと・直してほしいこと（自由に）</label>
-  <textarea id="fbFree" placeholder="例：解析が遅い／ラリーが抜ける／どのボタンを押すか分からなかった"></textarea>
-
-  <div class="row" style="margin-top:12px">
-    <button class="btn btn-primary" id="fbCopy">感想をコピーする</button>
-    <span class="hint" id="fbInfo">コピーしたら、LINEなどで作った人に貼り付けて送ってください</span>
-  </div>
-  <textarea id="fbOut" readonly hidden></textarea>
+  <div class="bar"><i id="exFill"></i></div>
+  <div class="note">実際に最初から最後まで再生しながら録ります。<b>残る長さと同じだけ時間がかかります</b>（1分ぶんなら1分）。
+  終わるまで画面を消さず、他のアプリに移らないでください。</div>
 </div>
 
+<div class="card" id="growCard" hidden>
+  <p class="step"><b>5</b>自分用に育てる</p>
+  <p class="hint" style="margin:0 0 14px">撮り方は人それぞれなので、<b>自分の動画に合わせるのが一番効きます</b>。
+  外したところを教えるだけです。<b>この端末の中だけ</b>で完結し、動画も数字もどこにも送られません。</p>
+
+  <ol class="howto">
+    <li><span class="no">1</span>
+      <div><b>ぜんぶ見て、合っているか答える</b>
+        <div class="hint">1区間ずつ流れます。1・2・3 を押すだけ。途中でやめても大丈夫です</div>
+        <button class="btn btn-primary" id="growCheck">はじめから確かめる</button>
+      </div></li>
+    <li><span class="no">2</span>
+      <div><b>外したところを直す</b>
+        <div class="hint">2・3 をつけた場所だけ出てきます。ラリーの間だけ押しっぱなし</div>
+        <button class="btn btn-ball" id="fixStart" disabled>間違いを直す</button>
+      </div></li>
+    <li><span class="no">3</span>
+      <div><b>覚えさせる</b>
+        <div class="hint">数秒で終わります。すぐ切れ方が変わります</div>
+        <button class="btn btn-primary" id="learn" disabled>この動画を覚えさせる</button>
+      </div></li>
+  </ol>
+  <p class="hint" id="gInfo" style="margin:10px 0 0"></p>
+
+  <div class="stat" style="margin-top:12px">
+    <span>いま使っている判定器 <b id="gWhich">土台</b></span>
+    <span>教えた動画 <b id="gVideos">0</b>本</span>
+    <span>教えた長さ <b id="gMin">0:00</b></span>
+  </div>
+
+  <div class="row" style="margin-top:12px">
+    <button class="btn btn-ghost" id="gCompare">土台と自分用を比べる</button>
+    <button class="btn btn-ghost" id="gSave">自分用を書き出す</button>
+    <button class="btn btn-ghost" id="gLoadBtn">自分用を読み込む</button>
+    <input type="file" id="gLoadFile" accept=".json" hidden>
+    <button class="btn btn-ghost" id="gReset">土台に戻す</button>
+  </div>
+  <div class="note" id="gNote" hidden></div>
+</div>
+
+
 <details class="adv">
-<summary>くわしい設定（切れ方を変える・精度を測る・自分用に育てる）</summary>
+<summary>くわしい設定（切れ方を変える・精度を見る）</summary>
 
 <div class="card" id="tuneCard" hidden>
   <p class="step"><b>A</b>細かさを変える</p>
@@ -255,50 +298,7 @@
   <div id="chkAdvice"></div>
 </div>
 
-<div class="card" id="outCard" hidden>
-  <p class="step"><b>C</b>書き出す</p>
-  <div class="row">
-    <button class="btn btn-ghost" id="saveScan">解析結果を保存（次回すぐ開ける）</button>
-    <button class="btn btn-ghost" id="copyList">区間リストをコピー</button>
-    <button class="btn btn-ghost" id="saveMarks" disabled>判定を書き出す</button>
-    <span class="hint" id="outInfo"></span>
-  </div>
-  <textarea id="out" readonly></textarea>
 
-  <div class="row" style="margin-top:14px">
-    <button class="btn btn-ball" id="exportVideo">ラリーだけの動画を書き出す</button>
-    <button class="btn btn-ghost" id="exCancel" hidden>やめる</button>
-    <span class="hint" id="exInfo"></span>
-  </div>
-  <div class="bar"><i id="exFill"></i></div>
-  <div class="note">実際に最初から最後まで再生しながら録ります。<b>残る長さと同じだけ時間がかかります</b>（1分ぶんなら1分）。
-  終わるまで画面を消さず、他のアプリに移らないでください。</div>
-</div>
-
-<div class="card" id="growCard" hidden>
-  <p class="step"><b>D</b>自分用に育てる</p>
-  <p class="hint" style="margin:0 0 10px">判定器が外したところだけ「ここがラリー」と教えると、<b>この端末の中だけ</b>で自分の撮り方に合わせて調整されます。動画も数字もどこにも送られません。</p>
-
-  <div class="stat" style="margin-top:6px">
-    <span>いま使っている判定器 <b id="gWhich">土台</b></span>
-    <span>教えた動画 <b id="gVideos">0</b>本</span>
-    <span>教えた長さ <b id="gMin">0:00</b></span>
-  </div>
-
-  <div class="row" style="margin-top:14px">
-    <button class="btn btn-ball" id="fixStart" disabled>間違いを直す</button>
-    <button class="btn btn-primary" id="learn" disabled>この動画を覚えさせる</button>
-    <span class="hint" id="gInfo">まず上の「はじめから確かめる」を一通りやってください</span>
-  </div>
-
-  <div class="row" style="margin-top:10px">
-    <button class="btn btn-ghost" id="gSave">自分用を書き出す</button>
-    <button class="btn btn-ghost" id="gLoadBtn">自分用を読み込む</button>
-    <input type="file" id="gLoadFile" accept=".json" hidden>
-    <button class="btn btn-ghost" id="gReset">土台に戻す</button>
-  </div>
-  <div class="note" id="gNote" hidden></div>
-</div>
 
 </details>
 
@@ -315,6 +315,7 @@
     <button class="btn btn-ghost" id="fixNone">ラリーなし</button>
     <button class="btn btn-ghost" id="fixReplay">もう一度見る</button>
     <button class="btn btn-primary" id="fixNext">次へ</button>
+    <span class="spd" data-spd><span class="lbl">速さ</span></span>
     <span class="prog mono" id="fixProg">0 / 0</span>
   </div>
 </div>

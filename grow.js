@@ -40,17 +40,32 @@ function defaultRange(i){
   return null;                                      // 足りない／間違い＝本人に教えてもらう
 }
 function resolvedRanges(){
+  // 頭から順に、決まっているところまでを集める。
+  // 途中でやめても、そこまでを覚えさせられるようにする
   const out = [];
+  let tEnd = null;
   for(let i = 0; i < blocks.length; i++){
     const d = (fixRanges[i] !== undefined) ? fixRanges[i] : defaultRange(i);
-    if(d === null) return null;                     // まだ決まっていない区間がある
-    out.push(...d);
+    if(d === null) break;                           // ここから先はまだ見ていない
+    out.push(...d); tEnd = blocks[i].b;
   }
-  return out;
+  if(tEnd === null) return null;
+  return {ranges: out, tEnd: tEnd, done: out.length};
 }
-function labelFeatures(ranges){
-  return feats.map(f => Object.assign({}, f,
-    {label: ranges.some(([a,b]) => f.t >= a && f.t < b) ? 1 : 0}));
+function labelFeatures(r){
+  // 見ていないところは学習に使わない（0と決めつけない）
+  return feats.filter(f => f.t < r.tEnd)
+              .map(f => Object.assign({}, f,
+                {label: r.ranges.some(([a,b]) => f.t >= a && f.t < b) ? 1 : 0}));
+}
+function resolvedCount(){
+  let c = 0;
+  for(let i = 0; i < blocks.length; i++){
+    const d = (fixRanges[i] !== undefined) ? fixRanges[i] : defaultRange(i);
+    if(d === null) break;
+    c++;
+  }
+  return c;
 }
 
 /* ---------- 画面の状態 ---------- */
@@ -63,19 +78,19 @@ function refreshGrow(){
   $("gVideos").textContent = sets.length;
   $("gMin").textContent = fmt(secs);
 
-  const judged = chk.marks.filter(x => x === 0 || x === 0.5 || x === 1).length;
   const need = blocks.map((b,i) => i).filter(i => (chk.marks[i] === 0 || chk.marks[i] === 0.5) && fixRanges[i] === undefined);
-  const allJudged = blocks.length > 0 && judged === blocks.length;
+  const done = resolvedCount();
+  const MIN = 4;                                   // これだけ見ていれば覚えさせられる
 
   $("fixStart").disabled = need.length === 0;
   $("fixStart").textContent = need.length ? `間違いを直す（${need.length}か所）` : "間違いを直す";
-  const ready = allJudged && need.length === 0;
-  $("learn").disabled = !ready;
+  $("learn").disabled = done < MIN;
 
   $("gInfo").textContent =
-    !allJudged ? `まず「はじめから確かめる」を最後までやってください（いま ${judged}/${blocks.length}）`
-    : need.length ? `直す場所が ${need.length}か所 残っています`
-    : "準備ができました。「この動画を覚えさせる」を押してください";
+    done === 0 && need.length === 0 ? "まず ① の「はじめから確かめる」を始めてください"
+    : need.length ? `② 直す場所が ${need.length}か所 あります`
+    : done < MIN ? `もう少し見てください（いま ${done}区間／${MIN}区間から覚えさせられます）`
+    : `③ 準備OK。${done}区間（${fmt(blocks[done-1].b)}ぶん）を覚えさせられます`;
 }
 
 /* ---------- 間違いを直す ---------- */
@@ -124,10 +139,12 @@ function holdEnd(){
   const a = Math.max(b.a, holdFrom), z = Math.min(b.b, v.currentTime);
   holdFrom = null;
   $("fixHold").classList.remove("on");
-  $("fixHold").textContent = "スペースを押しっぱなし";
+  $("fixHold").textContent = HOLD_LABEL;
   if(z - a >= 0.3) fixCur.push([a, z]);
   updFixTip();
 }
+const HOLD_LABEL = window.matchMedia("(hover: none)").matches ? "押している間だけ" : "スペースを押しっぱなし";
+$("fixHold").textContent = HOLD_LABEL;
 $("fixHold").addEventListener("mousedown", e => { e.preventDefault(); holdStart(); });
 document.addEventListener("mouseup", () => { if(fixing) holdEnd(); });
 $("fixHold").addEventListener("touchstart", e => { e.preventDefault(); holdStart(); }, {passive:false});
@@ -150,6 +167,7 @@ function commitFix(){
   fixRanges[fixTodo[fixAt]] = merged;
   openFix(fixAt + 1);
 }
+$("growCheck").onclick = () => $("chkStart").click();
 $("fixStart").onclick = startFix;
 
 /* 直しているあいだはキーを横取りする */
@@ -226,7 +244,8 @@ $("learn").onclick = () => {
     $("gNote").hidden = false;
     $("gNote").innerHTML = `覚えました。学習に使ったコマ数 ${y.length}、ラリー ${y.filter(x=>x===1).length}コマ。`
       + `区切り直したので、もう一度「はじめから確かめる」で良くなったか確かめてください。`
-      + (saved ? "" : "<br>※この端末には保存できていません。");
+      + (saved ? "<br><b>「自分用を書き出す」で保存しておいてください。</b>1週間このサイトを開かないと、端末から消えることがあります。"
+               : "<br>※この端末には保存できていません。「自分用を書き出す」でファイルに残してください。");
     refreshGrow();
   }, 30);
 };
@@ -267,3 +286,32 @@ $("gReset").onclick = () => {
 };
 
 loadStore();
+
+/* ---------- 土台と自分用を比べる ---------- */
+$("gCompare").onclick = () => {
+  if(!feats){ return; }
+  const calc = (m) => {
+    const p = RallyModel.predict(feats, m);
+    let r = RallyModel.toSegments(p, times, {
+      smooth: +$("sm").value, keepPercent: +$("th").value,
+      mergeGap: 1.0, minDuration: +$("min").value });
+    const pad = +$("pad").value, pad2 = +$("pad2").value;
+    r = r.map(([a,b]) => [Math.max(0, a - pad), Math.min(duration, b + pad2)]);
+    const out = [];
+    for(const x of r){ if(out.length && x[0] <= out[out.length-1][1]) out[out.length-1][1] = x[1]; else out.push(x); }
+    const keep = out.reduce((s,[a,b]) => s + (b-a), 0);
+    return {n: out.length, keep: keep, cut: duration ? Math.round(100 - 100*keep/duration) : 0};
+  };
+  const base = calc(MODEL);
+  const mine = (store && store.coef)
+    ? calc(Object.assign({}, MODEL, {coef: store.coef, intercept: store.intercept})) : null;
+  const row = (name, x) => `<tr><td>${name}</td><td class="mono">${x.n}本</td>`
+    + `<td class="mono">${fmt(x.keep)}</td><td class="mono">${x.cut}%</td></tr>`;
+  $("gNote").hidden = false;
+  $("gNote").innerHTML = mine
+    ? `<table class="cmp"><tr><th>判定器</th><th>ラリー</th><th>残る長さ</th><th>カット率</th></tr>`
+      + row("土台", base) + row("自分用", mine) + `</table>`
+      + `<div class="hint" style="margin-top:8px">どちらが合っているかは、切り替えて「はじめから確かめる」をやると分かります。`
+      + `「土台に戻す」で土台に切り替わります。</div>`
+    : `まだ自分用の判定器がありません。①〜③をやると作られます。<br>いまの土台： ${base.n}本 / 残り ${fmt(base.keep)} / カット率 ${base.cut}%`;
+};
