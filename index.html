@@ -193,8 +193,10 @@ kbd{font-family:"IBM Plex Mono",monospace;font-size:12px;background:var(--panel2
     <span class="hint" id="exInfo"></span>
   </div>
   <div class="bar"><i id="exFill"></i></div>
-  <p class="hint" style="margin:10px 0 0">実際に最初から最後まで再生しながら録ります。<b>残る長さと同じだけ時間がかかります</b>。
-  カクついたり画質が落ちるときは、<b>パソコンで書き出す</b>か「軽さ優先」を選んでください。
+  <p class="hint" style="margin:10px 0 0">再生せずに、動画のコマを直接組み替えて1本にします。
+  <b>音ズレもコマ落ちも起きません。</b>待ち時間は動画の長さより短くなります。<br>
+  この作りに対応していない端末では、昔のやり方（再生しながら録画）に自動で切り替わります。
+  そのときだけは、カクついたり音がずれることがあります。
   終わるまで画面を消さず、他のアプリに移らないでください。</p>
 </div>
 
@@ -239,6 +241,611 @@ kbd{font-family:"IBM Plex Mono",monospace;font-size:12px;background:var(--panel2
 </footer>
 </div>
 
+<script>
+/* ============================================================
+   fastcut.js — 動画を再生せずに、必要なところだけ切ってつなぐ
+
+   いままでは「再生しながら画面を録画」していた。
+   その方法だと、端末が重いとコマが落ち、音だけ先に進んで音ズレになる。
+
+   ここでは動画ファイルを直接ひらいて、
+     必要なコマだけ取り出す → 作り直す → 1本のMP4に組み立てる
+   という順で作る。時刻はこちらで書き込むので、音ズレは起きない。
+   再生しないので、動画の長さぶん待つ必要もない。
+   ============================================================ */
+
+/* ---------- ファイルを少しずつ読む（全部をメモリに載せない） ---------- */
+class Reader {
+  constructor(file, win){ this.f=file; this.size=file.size; this.win=win||(8<<20);
+                          this.buf=null; this.s=0; this.e=0; }
+  async bytes(start, len){
+    const end = start+len;
+    if(this.buf && start>=this.s && end<=this.e) return this.buf.subarray(start-this.s, end-this.s);
+    const rs = start;
+    const re = Math.min(this.size, Math.max(end, start + this.win));
+    this.buf = new Uint8Array(await this.f.slice(rs, re).arrayBuffer());
+    this.s = rs; this.e = rs + this.buf.length;
+    if(end > this.e) throw new Error("ファイルの終わりを越えて読もうとしました");
+    return this.buf.subarray(start-this.s, end-this.s);
+  }
+}
+
+/* ---------- 箱（box）をたどる小道具 ---------- */
+const FC = {};
+FC.typ = (u8,o)=>String.fromCharCode(u8[o],u8[o+1],u8[o+2],u8[o+3]);
+FC.u32 = (u8,o)=>((u8[o]<<24)|(u8[o+1]<<16)|(u8[o+2]<<8)|u8[o+3])>>>0;
+FC.i32 = (u8,o)=>(u8[o]<<24)|(u8[o+1]<<16)|(u8[o+2]<<8)|u8[o+3];
+FC.u16 = (u8,o)=>(u8[o]<<8)|u8[o+1];
+FC.u64 = (u8,o)=>FC.u32(u8,o)*4294967296 + FC.u32(u8,o+4);
+
+/* start〜end のあいだにある箱を順に呼び出す */
+FC.each = function(u8, start, end, cb){
+  let o = start;
+  while(o + 8 <= end){
+    let size = FC.u32(u8,o);
+    const type = FC.typ(u8,o+4);
+    let hdr = 8;
+    if(size === 1){ size = FC.u64(u8,o+8); hdr = 16; }
+    else if(size === 0){ size = end - o; }
+    if(size < hdr || o + size > end) break;
+    cb(type, o+hdr, o+size, o);
+    o += size;
+  }
+};
+
+/* ---------- moov（設計図）を見つける ---------- */
+async function findBox(reader, want){
+  let o = 0;
+  while(o + 8 <= reader.size){
+    const h = await reader.bytes(o, Math.min(16, reader.size-o));
+    let size = FC.u32(h,0); const type = FC.typ(h,4); let hdr = 8;
+    if(size === 1){ size = FC.u64(h,8); hdr = 16; }
+    else if(size === 0){ size = reader.size - o; }
+    if(size < hdr) throw new Error("この動画の形式を読めませんでした");
+    if(type === want) return {start:o+hdr, end:o+size, size:size};
+    o += size;
+  }
+  return null;
+}
+
+/* ---------- 1つのトラック（映像／音声）を読み解く ---------- */
+function readTrak(u8, s, e, movieTimescale){
+  const t = {timescale:1000, samples:[], sync:null, kind:"", w:0, h:0,
+             entryRaw:null, format:"", desc:null, elstShift:0, elstSkip:0};
+  let stbl=null, mdhdDur=0;
+
+  FC.each(u8, s, e, (ty, bs, be)=>{
+    if(ty==="tkhd"){
+      const ver=u8[bs];
+      const off = ver===1 ? bs+4+8+8+4 : bs+4+4+4+4;   /* version/flags, 作成, 更新, trackID */
+      t.id = FC.u32(u8, ver===1? bs+4+16 : bs+4+8);
+      /* 幅と高さは箱の最後 8 バイト（16.16の固定小数） */
+      t.w = FC.u32(u8, be-8)/65536; t.h = FC.u32(u8, be-4)/65536;
+    }
+    else if(ty==="edts"){
+      FC.each(u8, bs, be, (t2, es)=>{
+        if(t2!=="elst"){ return; }
+        const ver=u8[es], n=FC.u32(u8,es+4);
+        let p=es+8;
+        for(let i=0;i<n;i++){
+          let segDur, media;
+          if(ver===1){ segDur=FC.u64(u8,p); media=FC.i32(u8,p+8)*4294967296+FC.u32(u8,p+12); p+=20; }
+          else { segDur=FC.u32(u8,p); media=FC.i32(u8,p+4); p+=12; }
+          if(media === -1) t.elstShift += segDur/movieTimescale;   /* 頭の空白 */
+          else { t.elstSkip = media; break; }                      /* ここから再生が始まる */
+        }
+      });
+    }
+    else if(ty==="mdia"){
+      FC.each(u8, bs, be, (t2, ms, me)=>{
+        if(t2==="mdhd"){
+          const ver=u8[ms];
+          t.timescale = ver===1 ? FC.u32(u8,ms+4+16) : FC.u32(u8,ms+4+8);
+          mdhdDur = ver===1 ? FC.u64(u8,ms+4+20) : FC.u32(u8,ms+4+12);
+        }
+        else if(t2==="hdlr"){ t.kind = FC.typ(u8, ms+8); }
+        else if(t2==="minf"){
+          FC.each(u8, ms, me, (t3, is, ie)=>{ if(t3==="stbl") stbl=[is,ie]; });
+        }
+      });
+    }
+  });
+  t.duration = mdhdDur / t.timescale;
+  if(!stbl) return null;
+
+  let stts=null, ctts=null, stsc=null, stsz=null, stco=null, co64=null, stss=null;
+  FC.each(u8, stbl[0], stbl[1], (ty, bs, be)=>{
+    if(ty==="stsd"){
+      /* 最初の1件だけ見る */
+      FC.each(u8, bs+8, be, (fmt, es, ee, boxStart)=>{
+        if(t.entryRaw) return;
+        t.format = fmt;
+        t.entryRaw = u8.slice(boxStart, ee);         /* 音声はこの箱をそのまま写して使う */
+        if(t.kind==="vide"){
+          t.w = FC.u16(u8, es+24) || t.w; t.h = FC.u16(u8, es+26) || t.h;
+          FC.each(u8, es+78, ee, (ct, cs, ce)=>{
+            if(ct==="avcC"||ct==="hvcC"||ct==="vpcC"||ct==="av1C"){
+              t.descType = ct; t.desc = u8.slice(cs, ce);
+            }
+          });
+        }
+      });
+    }
+    else if(ty==="stts") stts=[bs,be];
+    else if(ty==="ctts") ctts=[bs,be];
+    else if(ty==="stsc") stsc=[bs,be];
+    else if(ty==="stsz"||ty==="stz2") stsz=[bs,be,ty];
+    else if(ty==="stco") stco=[bs,be];
+    else if(ty==="co64") co64=[bs,be];
+    else if(ty==="stss") stss=[bs,be];
+  });
+  if(!stts||!stsc||!stsz||(!stco&&!co64)) return null;
+
+  /* 各コマの大きさ */
+  const sizes=[]; {
+    const [bs] = stsz;
+    const one = FC.u32(u8, bs+4), n = FC.u32(u8, bs+8);
+    if(one) for(let i=0;i<n;i++) sizes.push(one);
+    else for(let i=0;i<n;i++) sizes.push(FC.u32(u8, bs+12+i*4));
+  }
+  const total = sizes.length;
+
+  /* 各コマの時刻（復号の順番で） */
+  const dts=new Float64Array(total), dur=new Float64Array(total); {
+    const [bs]=stts; const n=FC.u32(u8,bs+4); let k=0, t0=0;
+    for(let i=0;i<n;i++){
+      const c=FC.u32(u8,bs+8+i*8), d=FC.u32(u8,bs+12+i*8);
+      for(let j=0;j<c && k<total;j++){ dts[k]=t0; dur[k]=d; t0+=d; k++; }
+    }
+    while(k<total){ dts[k]=t0; dur[k]=dur[k-1]||0; t0+=dur[k]; k++; }
+  }
+
+  /* 表示の時刻（並べ替えがある場合のずれ） */
+  const cts=new Float64Array(total);
+  if(ctts){
+    const [bs]=ctts; const ver=u8[bs], n=FC.u32(u8,bs+4); let k=0;
+    for(let i=0;i<n;i++){
+      const c=FC.u32(u8,bs+8+i*8);
+      const off = ver===1 ? FC.i32(u8,bs+12+i*8) : FC.u32(u8,bs+12+i*8);
+      for(let j=0;j<c && k<total;j++){ cts[k]=dts[k]+off; k++; }
+    }
+    while(k<total){ cts[k]=dts[k]; k++; }
+  } else for(let i=0;i<total;i++) cts[i]=dts[i];
+
+  /* どのコマが単独で開けるか（キーフレーム） */
+  const isSync=new Uint8Array(total);
+  if(stss){ const [bs]=stss; const n=FC.u32(u8,bs+4);
+    for(let i=0;i<n;i++){ const s1=FC.u32(u8,bs+8+i*4)-1; if(s1>=0&&s1<total) isSync[s1]=1; } }
+  else isSync.fill(1);
+
+  /* ファイルのどこに置いてあるか */
+  const chunkOff=[];
+  if(co64){ const [bs]=co64; const n=FC.u32(u8,bs+4);
+    for(let i=0;i<n;i++) chunkOff.push(FC.u64(u8,bs+8+i*8)); }
+  else { const [bs]=stco; const n=FC.u32(u8,bs+4);
+    for(let i=0;i<n;i++) chunkOff.push(FC.u32(u8,bs+8+i*4)); }
+
+  const runs=[]; { const [bs]=stsc; const n=FC.u32(u8,bs+4);
+    for(let i=0;i<n;i++) runs.push({first:FC.u32(u8,bs+8+i*12)-1, per:FC.u32(u8,bs+12+i*12)}); }
+
+  const offs=new Float64Array(total);
+  { let si=0;
+    for(let r=0;r<runs.length && si<total;r++){
+      const last = (r+1<runs.length? runs[r+1].first : chunkOff.length);
+      for(let c=runs[r].first; c<last && si<total; c++){
+        let o = chunkOff[c];
+        for(let j=0;j<runs[r].per && si<total;j++){ offs[si]=o; o+=sizes[si]; si++; }
+      }
+    }
+  }
+
+  const shift = t.elstShift, skip = t.elstSkip;
+  for(let i=0;i<total;i++){
+    t.samples.push({
+      off:offs[i], size:sizes[i], sync:!!isSync[i],
+      /* 画面に見えている時刻（秒）。編集リストの分をここで合わせる */
+      t:(cts[i]-skip)/t.timescale + shift,
+      d:dur[i]/t.timescale,
+      raw:cts[i]
+    });
+  }
+  return t;
+}
+
+async function demux(file){
+  const r = new Reader(file, 1<<20);
+  const moov = await findBox(r, "moov");
+  if(!moov) throw new Error("動画の設計図（moov）が見つかりませんでした");
+  const u8 = new Uint8Array(await file.slice(moov.start-8, moov.end).arrayBuffer());
+  let movieTimescale = 1000;
+  FC.each(u8, 8, u8.length, (ty, bs)=>{ if(ty==="mvhd"){
+    movieTimescale = u8[bs]===1 ? FC.u32(u8,bs+4+16) : FC.u32(u8,bs+4+8); } });
+  const tracks=[];
+  FC.each(u8, 8, u8.length, (ty, bs, be)=>{
+    if(ty!=="trak") return;
+    try{ const t=readTrak(u8, bs, be, movieTimescale); if(t) tracks.push(t); }catch(e){}
+  });
+  const vid = tracks.find(t=>t.kind==="vide" && t.desc);
+  const aud = tracks.find(t=>t.kind==="soun" && t.entryRaw);
+  if(!vid) throw new Error("映像トラックを読めませんでした");
+  return {vid, aud, movieTimescale};
+}
+
+/* ---------- 入っている形式から、復号の合言葉（codec文字列）を作る ---------- */
+function codecString(kind, d){
+  if(kind==="avcC") return "avc1." + [d[1],d[2],d[3]].map(x=>x.toString(16).padStart(2,"0")).join("");
+  if(kind==="vpcC"){ const p=d[4],l=d[5],b=d[6]>>4;
+    return "vp09."+String(p).padStart(2,"0")+"."+String(l).padStart(2,"0")+"."+String(b).padStart(2,"0"); }
+  if(kind==="av1C"){ const p=(d[1]>>5)&7, l=d[1]&31, tier=(d[2]>>7)&1, hi=(d[2]>>6)&1;
+    return "av01."+p+"."+String(l).padStart(2,"0")+(tier?"H":"M")+"."+(hi?"10":"08"); }
+  if(kind==="hvcC"){
+    const sp=(d[1]>>6)&3, tier=(d[1]>>5)&1, prof=d[1]&31;
+    let cf=FC.u32(d,2), rev=0;
+    for(let i=0;i<32;i++){ rev=(rev<<1)|(cf&1); cf>>>=1; }
+    const cons=[]; for(let i=6;i<12;i++) cons.push(d[i]);
+    while(cons.length && cons[cons.length-1]===0) cons.pop();
+    return "hvc1."+["","A","B","C"][sp]+prof+"."+(rev>>>0).toString(16).toUpperCase()
+      +"."+(tier?"H":"L")+d[12]+(cons.length? "."+cons.map(x=>x.toString(16).toUpperCase()).join("."):"");
+  }
+  throw new Error("この映像形式には対応していません（"+kind+"）");
+}
+
+/* ---------- MP4 を組み立てる ---------- */
+class Box {
+  static make(type, ...parts){
+    let len=8; for(const p of parts) len+=p.length;
+    const b=new Uint8Array(len), dv=new DataView(b.buffer);
+    dv.setUint32(0,len); for(let i=0;i<4;i++) b[4+i]=type.charCodeAt(i);
+    let o=8; for(const p of parts){ b.set(p,o); o+=p.length; }
+    return b;
+  }
+  static u8a(...n){ return new Uint8Array(n); }
+  static u16(n){ return new Uint8Array([n>>8&255,n&255]); }
+  static u32(n){ return new Uint8Array([n>>>24&255,n>>>16&255,n>>>8&255,n&255]); }
+  static str(s){ const b=new Uint8Array(s.length); for(let i=0;i<s.length;i++) b[i]=s.charCodeAt(i); return b; }
+  static cat(list){ let n=0; for(const x of list) n+=x.length;
+    const b=new Uint8Array(n); let o=0; for(const x of list){ b.set(x,o); o+=x.length; } return b; }
+}
+const B=Box;
+
+function stblFor(tr){
+  /* tr: {entry, samples:[{size,dts,cts,sync,off}], timescale} */
+  const S=tr.samples;
+  /* stts */
+  const stts=[]; for(let i=0;i<S.length;i++){
+    const d = (i+1<S.length? S[i+1].dts-S[i].dts : S[i].dur);
+    if(stts.length && stts[stts.length-1].d===d) stts[stts.length-1].c++;
+    else stts.push({c:1,d:d});
+  }
+  const sttsB=B.make("stts", B.u32(0), B.u32(stts.length),
+    B.cat(stts.map(e=>B.cat([B.u32(e.c), B.u32(Math.max(0,Math.round(e.d)))]))));
+  /* ctts（並べ替えがあるときだけ） */
+  let cttsB=null;
+  if(S.some(s=>s.cts!==s.dts)){
+    const ct=[]; for(const s of S){ const o=Math.round(s.cts-s.dts);
+      if(ct.length && ct[ct.length-1].o===o) ct[ct.length-1].c++; else ct.push({c:1,o:o}); }
+    cttsB=B.make("ctts", B.u8a(1,0,0,0), B.u32(ct.length),
+      B.cat(ct.map(e=>B.cat([B.u32(e.c), B.u32(e.o<0? (e.o>>>0) : e.o)]))));
+  }
+  /* stss */
+  let stssB=null;
+  if(S.some(s=>!s.sync)){
+    const k=[]; S.forEach((s,i)=>{ if(s.sync) k.push(i+1); });
+    stssB=B.make("stss", B.u32(0), B.u32(k.length), B.cat(k.map(B.u32)));
+  }
+  const stsz=B.make("stsz", B.u32(0), B.u32(0), B.u32(S.length), B.cat(S.map(s=>B.u32(s.size))));
+  const stsc=B.make("stsc", B.u32(0), B.u32(1), B.cat([B.u32(1),B.u32(1),B.u32(1)]));
+  const big = S.some(s=>s.off > 0xFFFFFFF0);
+  const stco = big
+    ? B.make("co64", B.u32(0), B.u32(S.length), B.cat(S.map(s=>B.cat([
+        B.u32(Math.floor(s.off/4294967296)), B.u32(s.off>>>0)]))))
+    : B.make("stco", B.u32(0), B.u32(S.length), B.cat(S.map(s=>B.u32(s.off))));
+  const kids=[B.make("stsd", B.u32(0), B.u32(1), tr.entry), sttsB];
+  if(cttsB) kids.push(cttsB);
+  if(stssB) kids.push(stssB);
+  kids.push(stsc, stsz, stco);
+  return B.make("stbl", ...kids);
+}
+
+function trakBox(tr, id, movieTimescale){
+  const durMv = Math.round(tr.durationSec * movieTimescale);
+  const durMd = Math.round(tr.durationSec * tr.timescale);
+  const vis = tr.kind==="vide";
+  const tkhd = B.make("tkhd", B.u8a(0,0,0,3), B.u32(0), B.u32(0), B.u32(id), B.u32(0), B.u32(durMv),
+    B.u32(0), B.u32(0), B.u16(0), B.u16(0), B.u16(vis?0:256), B.u16(0),
+    B.cat([0x00010000,0,0,0,0x00010000,0,0,0,0x40000000].map(B.u32)),
+    B.u32(vis? (tr.w<<16) : 0), B.u32(vis? (tr.h<<16) : 0));
+  const mdhd = B.make("mdhd", B.u32(0), B.u32(0), B.u32(0), B.u32(tr.timescale), B.u32(durMd),
+    B.u16(0x55C4), B.u16(0));
+  const hdlr = B.make("hdlr", B.u32(0), B.u32(0), B.str(vis?"vide":"soun"),
+    B.u32(0), B.u32(0), B.u32(0), B.str(vis?"VideoHandler\0":"SoundHandler\0"));
+  const head = vis ? B.make("vmhd", B.u8a(0,0,0,1), B.u32(0), B.u32(0))
+                   : B.make("smhd", B.u32(0), B.u32(0));
+  const dinf = B.make("dinf", B.make("dref", B.u32(0), B.u32(1), B.make("url ", B.u8a(0,0,0,1))));
+  const minf = B.make("minf", head, dinf, stblFor(tr));
+  const mdia = B.make("mdia", mdhd, hdlr, minf);
+  if(tr.editStart){
+    const elst = B.make("elst", B.u32(0), B.u32(1),
+      B.u32(durMv), B.u32(tr.editStart), B.u16(1), B.u16(0));
+    return B.make("trak", tkhd, B.make("edts", elst), mdia);
+  }
+  return B.make("trak", tkhd, mdia);
+}
+
+function buildMp4(tracks, movieTimescale, brands){
+  const ftyp = B.make("ftyp", B.str("isom"), B.u32(512),
+    B.cat(brands.map(B.str)));
+  const longest = Math.max(...tracks.map(t=>t.durationSec));
+  const mvhd = B.make("mvhd", B.u32(0), B.u32(0), B.u32(0), B.u32(movieTimescale),
+    B.u32(Math.round(longest*movieTimescale)), B.u32(0x00010000), B.u16(0x0100), B.u16(0), B.u32(0), B.u32(0),
+    B.cat([0x00010000,0,0,0,0x00010000,0,0,0,0x40000000].map(B.u32)),
+    B.cat([0,0,0,0,0,0].map(B.u32)), B.u32(tracks.length+1));
+  const traks = tracks.map((t,i)=>trakBox(t, i+1, movieTimescale));
+  return {ftyp, moov: B.make("moov", mvhd, ...traks)};
+}
+
+/* ---------- 本体 ---------- */
+/* 音のかけら（20ミリ秒ほど）の境目に範囲をそろえる。
+   ここを合わせておくと、音が1本につながり、映像との差が溜まらない。
+   ずれても最大20ミリ秒。耳でも目でも分からない。 */
+function snapToAudio(ranges, A){
+  if(!A || !A.samples.length) return ranges.map(r=>[r[0],r[1]]);
+  const S=A.samples;
+  const at=(t)=>{ let lo=0, hi=S.length-1, r=0;
+    while(lo<=hi){ const m=(lo+hi)>>1; if(S[m].t<=t+1e-9){ r=m; lo=m+1; } else hi=m-1; }
+    return r; };
+  const out=[];
+  for(const [a,b] of ranges){
+    const i=at(a); let j=at(b);
+    if(j<=i) j=Math.min(i+1, S.length-1);
+    const a2=S[i].t;
+    const b2=(j<S.length? S[j].t : S[S.length-1].t+S[S.length-1].d);
+    if(b2>a2+1e-6) out.push([a2,b2]);
+  }
+  return out.length? out : ranges.map(r=>[r[0],r[1]]);
+}
+
+async function fastCut(opt){
+  const {file, maxWidth, bitrate, onStage, onProgress, cancelled} = opt;
+  const mv = await demux(file);
+  const V = mv.vid, A = mv.aud;
+  const ranges = snapToAudio(opt.ranges, A);
+
+  const srcW = Math.round(V.w), srcH = Math.round(V.h);
+  const W = Math.round(Math.min(maxWidth||1920, srcW)/2)*2;
+  const H = Math.round(srcH*W/srcW/2)*2;
+
+  /* 元の動画のコマ間隔（マイクロ秒）。これを出力の刻みにする */
+  const STEP = (()=>{
+    const d=[]; for(let i=1;i<Math.min(V.samples.length,300);i++) d.push(V.samples[i].t-V.samples[i-1].t);
+    d.sort((x,y)=>x-y);
+    const m = d.length? d[d.length>>1] : 1/30;
+    return (m>0.002 && m<0.5) ? Math.round(m*1e6) : 33333;
+  })();
+
+  const inCodec = codecString(V.descType, V.desc);
+  const dcfg = {codec:inCodec, codedWidth:srcW, codedHeight:srcH, description:V.desc};
+  let ok=false;
+  try{ ok = (await VideoDecoder.isConfigSupported(dcfg)).supported; }catch(e){}
+  if(!ok) throw new Error("この動画の形式をこの端末では開けませんでした（"+inCodec+"）");
+
+  /* 出す形式を決める。まずはH.264（どこでも再生できる） */
+  const want = (V.descType==="vpcC") ? ["vp09.00.41.08","vp09.00.10.08"]
+             : ["avc1.640034","avc1.640033","avc1.64002A","avc1.640028","avc1.4D0028","avc1.42E028",
+                "hvc1.1.6.L153.B0","vp09.00.41.08"];
+  const kbps = bitrate || Math.min(24000000, Math.max(4000000, Math.round(W*H*30*0.18)));
+  /* 端末の部品（GPU）で作れるならその方が速い。だめなら普通のやり方に落とす */
+  let ecfg=null; const tried=[];
+  for(const hw of ["prefer-hardware","no-preference"]){
+    for(const c of want){
+      const cfg = {codec:c, width:W, height:H, bitrate:kbps, framerate:Math.max(1,Math.round(1e6/STEP)), hardwareAcceleration:hw};
+      if(c.startsWith("avc1")) cfg.avc={format:"avc"};
+      if(c.startsWith("hvc1")) cfg.hevc={format:"hevc"};
+      try{ if((await VideoEncoder.isConfigSupported(cfg)).supported){ ecfg=cfg; break; } }
+      catch(e){ tried.push(c+":"+e.name); }
+    }
+    if(ecfg) break;
+  }
+  if(!ecfg) throw new Error("この端末では動画を作り直せませんでした");
+
+  /* --- 出力の置き場 --- */
+  const vOut=[], aOut=[]; let vDesc=null, aShiftTicks=0;
+  const VT = 1000000;                      /* 映像の時間の刻み（マイクロ秒） */
+  let outUs = 0;                           /* いままでに書いた長さ */
+  const total = ranges.reduce((s,[a,b])=>s+(b-a),0);
+
+  let fatal=null;
+  const encoder = new VideoEncoder({
+    output:(chunk, meta)=>{
+      if(meta && meta.decoderConfig && !vDesc && meta.decoderConfig.description)
+        vDesc = new Uint8Array(meta.decoderConfig.description);
+      const b=new Uint8Array(chunk.byteLength); chunk.copyTo(b);
+      vOut.push({data:b, cts:chunk.timestamp, dur:chunk.duration||0, sync:chunk.type==="key"});
+    },
+    error:e=>{ fatal = fatal||e; }
+  });
+  encoder.configure(ecfg);
+
+  const vr = new Reader(file, 12<<20);
+  let rangeEnd=0, rangeStart=0, firstOfRange=true, lastJ=-1, rangeCap=0;
+
+  /* 大きさを変えるときだけ、いったん板に描いて縮める */
+  const scaleCv = (W!==srcW || H!==srcH)
+    ? (self.OffscreenCanvas ? new OffscreenCanvas(W,H) : Object.assign(document.createElement("canvas"),{width:W,height:H}))
+    : null;
+  const scaleCtx = scaleCv ? scaleCv.getContext("2d",{alpha:false}) : null;
+  if(scaleCtx){ try{ scaleCtx.imageSmoothingQuality="high"; }catch(e){} }
+
+  const decoder = new VideoDecoder({
+    output:(frame)=>{
+      try{
+        const t = frame.timestamp/1e6;
+        const du = Math.round(frame.duration || 33333);
+        /* 範囲の先頭をまたぐコマは捨てずに使う。そのコマこそ「先頭で見えている絵」 */
+        if(t + du/1e6 <= rangeStart + 1e-9 || t >= rangeEnd - 1e-9){ frame.close(); return; }
+        /* 出す時刻は「等間隔の格子」に載せる。
+           元の時刻をそのまま使うと、継ぎ目で長さ0.2ミリ秒のコマができ、
+           再生機や投稿先がそこでコマを落として音ズレに見えてしまう。 */
+        /* 何番目の格子に載せるかは、元の時刻から決める。
+           順番に詰めると「範囲の頭をまたぐコマ」の分だけ全体が後ろへずれる。 */
+        const j = Math.round((t - rangeStart)*1e6/STEP);
+        if(j <= lastJ || j < 0 || j >= rangeCap){ frame.close(); return; }
+        lastJ = j;
+        const ts = outUs + j*STEP;
+        let f2;
+        if(scaleCtx){ scaleCtx.drawImage(frame,0,0,W,H); f2=new VideoFrame(scaleCv,{timestamp:ts,duration:STEP}); }
+        else f2 = new VideoFrame(frame, {timestamp:ts, duration:STEP});
+        encoder.encode(f2, {keyFrame:firstOfRange});
+        f2.close();
+        firstOfRange=false;
+      }catch(e){ fatal = fatal||e; }
+      frame.close();
+    },
+    error:e=>{ fatal = fatal||e; }
+  });
+  decoder.configure(dcfg);
+
+  if(onStage) onStage("映像を組み立てています");
+
+  const S = V.samples;
+  for(const [a,b] of ranges){
+    if(cancelled && cancelled()) break;
+    rangeStart=a; rangeEnd=b; firstOfRange=true;
+    lastJ=-1; rangeCap=Math.max(1, Math.floor(((b-a)*1e6 + 1)/STEP));
+    /* a を含むコマ、の手前で一番近いキーフレームから読み始める */
+    let idx = 0;
+    for(let i=0;i<S.length;i++){ if(S[i].t <= a + 1e-9) idx=i; else break; }
+    let key = idx;
+    while(key>0 && !S[key].sync) key--;
+    for(let i=key;i<S.length;i++){
+      const s=S[i];
+      if(s.t >= b) break;
+      const bytes = await vr.bytes(s.off, s.size);
+      decoder.decode(new EncodedVideoChunk({
+        type: s.sync? "key":"delta",
+        timestamp: Math.round(s.t*1e6),
+        duration: Math.round(s.d*1e6),
+        data: bytes
+      }));
+      if(decoder.decodeQueueSize > 12 || encoder.encodeQueueSize > 12){
+        await new Promise(r=>setTimeout(r,0));
+        while(encoder.encodeQueueSize > 24) await new Promise(r=>setTimeout(r,4));
+      }
+      if(cancelled && cancelled()) break;
+    }
+    await decoder.flush();
+    outUs += Math.round((b-a)*1e6);
+    if(onProgress) onProgress(outUs/1e6, total);
+  }
+  await decoder.flush(); decoder.close();
+  await encoder.flush(); encoder.close();
+  if(!vOut.length) throw new Error("コマを1枚も取り出せませんでした");
+  if(!vDesc && ecfg.codec.startsWith("vp09")){
+    const parts=ecfg.codec.split(".");
+    vDesc=new Uint8Array([1,0,0,0, +parts[1]||0, +parts[2]||41, ((+parts[3]||8)<<4), 2,2,2, 0,0]);
+  }
+  if(fatal) throw fatal;
+  if(!vDesc) throw new Error("作り直した映像の情報を取り出せませんでした");
+
+  /* --- 音は作り直さず、元のかけらをそのまま並べる（劣化ゼロ・ズレなし） --- */
+  if(A){
+    if(onStage) onStage("音を並べています");
+    const ar = new Reader(file, 4<<20);
+    let aUs = 0;
+    for(let k=0;k<ranges.length;k++){
+      const [a,b] = ranges[k];
+      const baseT = Math.round(aUs*A.timescale);
+      /* 範囲に「まるごと収まる」かけらだけを使う。
+         はみ出すかけらを入れると、その分だけ音が長くなり、あとの音が後ろへずれていく。 */
+      for(const s of A.samples){
+        if(s.t < a - 1e-9) continue;
+        if(s.t >= b - 1e-9) break;
+        const cts = Math.round(baseT + (s.t-a)*A.timescale);
+        const bytes = await ar.bytes(s.off, s.size);
+        aOut.push({data:new Uint8Array(bytes), cts:cts,
+                   dur:Math.round(s.d*A.timescale), sync:true});
+      }
+      aUs += (b-a);
+    }
+    aOut.sort((x,y)=>x.cts-y.cts);
+    /* 1本目の先頭だけは範囲の頭より前から始まる。全体をその分ずらし、
+       ずらした事実を編集リスト（elst）に書いて、見た目の時刻を合わせる */
+    aShiftTicks = aOut.length ? Math.max(0, -aOut[0].cts) : 0;
+    let prev = -1;
+    for(const s of aOut){
+      s.cts += aShiftTicks;
+      if(s.cts <= prev) s.cts = prev + 1;
+      prev = s.cts;
+    }
+  }
+
+  /* --- 1本のMP4に組み立てる --- */
+  if(onStage) onStage("1本にまとめています");
+
+  const vSamples = vOut.slice().sort((x,y)=>x.cts-y.cts);
+  const order = vOut;                       /* 符号化の出た順＝復号の順 */
+  const dtsList = vSamples.map(s=>s.cts);   /* 並べ替えがあっても辻褄が合うようにする */
+  order.forEach((s,i)=>{ s.dts = dtsList[i]; s.ctsV = s.cts; });
+
+  const vTrack = {
+    kind:"vide", timescale:VT, w:W, h:H, entry:null,
+    durationSec: outUs/1e6,
+    samples: order.map((s,i)=>({size:s.data.length, dts:s.dts, cts:s.ctsV, dur:(s.dur||33333),
+                                sync:s.sync, data:s.data, off:0}))
+  };
+  const vEntryChild = ecfg.codec.startsWith("avc1") ? "avcC"
+                    : ecfg.codec.startsWith("hvc1") ? "hvcC"
+                    : ecfg.codec.startsWith("vp09") ? "vpcC" : "av1C";
+  const fourcc = ecfg.codec.startsWith("avc1") ? "avc1"
+               : ecfg.codec.startsWith("hvc1") ? "hvc1"
+               : ecfg.codec.startsWith("vp09") ? "vp09" : "av01";
+  vTrack.entry = B.make(fourcc,
+    B.cat([B.u8a(0,0,0,0,0,0), B.u16(1)]),
+    B.cat([B.u32(0),B.u32(0),B.u32(0),B.u32(0)]),
+    B.u16(W), B.u16(H), B.u32(0x00480000), B.u32(0x00480000), B.u32(0),
+    B.u16(1), new Uint8Array(32), B.u16(0x0018), B.u16(0xFFFF),
+    B.make(vEntryChild, vDesc));
+
+  const tracks=[vTrack];
+  if(A && aOut.length){
+    tracks.push({kind:"soun", timescale:A.timescale, entry:A.entryRaw, w:0,h:0,
+      editStart: aShiftTicks,
+      durationSec: aUsTotal(ranges),
+      samples: aOut.map(s=>({size:s.data.length, dts:s.cts, cts:s.cts, dur:s.dur,
+                             sync:true, data:s.data, off:0}))});
+  }
+
+  /* 時間順に混ぜて並べる（どの再生機でも引っかからないように） */
+  const flat=[];
+  tracks.forEach((t,ti)=>t.samples.forEach((s,si)=>flat.push({ti,si,t:s.dts/t.timescale})));
+  flat.sort((x,y)=> x.t-y.t || x.ti-y.ti);
+
+  let dataLen=0; for(const f of flat) dataLen += tracks[f.ti].samples[f.si].size;
+  const {ftyp} = buildMp4(tracks, 1000, ["isom","iso2",fourcc,"mp41"]);
+  const mdatHdrBig = dataLen + 8 > 0xFFFFFFF0;
+  const mdatHdr = mdatHdrBig ? 16 : 8;
+  let pos = ftyp.length + mdatHdr;
+  for(const f of flat){ const s=tracks[f.ti].samples[f.si]; s.off=pos; pos+=s.size; }
+
+  const {moov} = buildMp4(tracks, 1000, ["isom"]);
+  const parts=[ftyp];
+  if(mdatHdrBig){
+    const h=new Uint8Array(16); new DataView(h.buffer).setUint32(0,1);
+    h.set(B.str("mdat"),4);
+    const dv=new DataView(h.buffer);
+    dv.setUint32(8, Math.floor((dataLen+16)/4294967296)); dv.setUint32(12, (dataLen+16)>>>0);
+    parts.push(h);
+  } else {
+    parts.push(B.cat([B.u32(dataLen+8), B.str("mdat")]));
+  }
+  for(const f of flat) parts.push(tracks[f.ti].samples[f.si].data);
+  parts.push(moov);
+  return {blob:new Blob(parts,{type:"video/mp4"}), width:W, height:H,
+          frames:vOut.length, seconds:outUs/1e6, codec:ecfg.codec};
+}
+function aUsTotal(ranges){ return ranges.reduce((s,[a,b])=>s+(b-a),0); }
+
+</script>
 <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/pose-detection@2.1.3/dist/pose-detection.min.js"></script>
 <script>
@@ -272,13 +879,13 @@ else {
 const fmt=s=>Math.floor(Math.max(0,s)/60)+":"+String(Math.floor(Math.max(0,s)%60)).padStart(2,"0");
 const tick=()=>new Promise(r=>setTimeout(r,0));
 const v=$("v"), work=$("work");
-let duration=0, marks=[], holdStart=null, fileName="", feats=null;
+let duration=0, marks=[], holdStart=null, fileName="", videoFile=null, feats=null;
 
 /* ---------- 1. 動画 ---------- */
 $("file").onchange=e=>{
   const f=e.target.files[0]; if(!f) return;
   ev("1-動画を選んだ"); evMarked=false;
-  fileName=f.name; $("err").innerHTML="";
+  fileName=f.name; videoFile=f; $("err").innerHTML="";
   v.src=URL.createObjectURL(f);
   v.onloadedmetadata=()=>{
     duration=v.duration; $("tEnd").textContent=fmt(duration);
@@ -694,18 +1301,17 @@ const exSeek=t=>new Promise(r=>{
   setTimeout(fin,3000);
   v.currentTime=Math.max(0,Math.min(t,duration-0.05));
 });
-$("exportVideo").onclick=async()=>{
-  if(exporting) return;
-  const segs=exSegs();
-  if(!segs.length){ $("exInfo").textContent="先にラリーの印をつけてください"; return; }
+/* ====== 昔ながらのやり方：実際に再生しながら画面を録る ======
+   新しいやり方（下）が使えない端末のための控え。
+   端末が重いとコマが落ち、音がずれることがある。 */
+async function slowExport(segs){
   if(!window.MediaRecorder || !HTMLCanvasElement.prototype.captureStream){
     $("exInfo").innerHTML='<b style="color:var(--ng)">この端末では動画の書き出しができません。</b>パソコンでお試しください。';
+    $("exportVideo").disabled=false; $("exCancel").hidden=true; exporting=false;
     return;
   }
-  ev("3-書き出しを押した");
   if(typeof stopAuto==="function") stopAuto();
-  exporting=true; cancelExport=false;
-  $("exportVideo").disabled=true; $("exCancel").hidden=false; $("exInfo").textContent="準備中…";
+  $("exInfo").textContent="準備中…";
 
   const total=segs.reduce((s,[a,b])=>s+(b-a),0);
   /* 大きさ：元の動画に合わせる（選んだ上限まで）。偶数にそろえる */
@@ -783,15 +1389,71 @@ $("exportVideo").onclick=async()=>{
   const ext=type.indexOf("mp4")>=0 ? "mp4" : "webm";
   const blob=new Blob(parts,{type});
   if(!blob.size){ ev("x-書き出しが空だった"); $("exInfo").textContent="中身が空でした。パソコンでお試しください。"; return; }
+  saveVideo(blob, ext);
+  ev("4-書き出せた");
+  const fps=total>0? Math.round(nFrame/total) : 0;
+  const mb2=blob.size/1048576;
+  $("exInfo").innerHTML=`できました（${fmt(total)}・${mb2<10? mb2.toFixed(1):mb2.toFixed(0)}MB・${W}×${H}・${ext.toUpperCase()}・毎秒${fps}コマ）`
+    + (fps<24? '<br><span style="color:var(--warn,#E8C25C)">コマ数が少なめです。「軽さ優先」を選ぶか、パソコンで書き出すと滑らかになります</span>' : "");
+}
+
+/* ====== 出来た動画を渡す ====== */
+function saveVideo(blob, ext){
   const url=URL.createObjectURL(blob);
   const link=document.createElement("a");
   link.href=url; link.download=(fileName.replace(/\.[^.]+$/,""))+"_ラリーだけ."+ext;
   document.body.appendChild(link); link.click(); link.remove();
   setTimeout(()=>URL.revokeObjectURL(url),120000);
-  ev("4-書き出せた");
-  const fps=total>0? Math.round(nFrame/total) : 0;
-  $("exInfo").innerHTML=`できました（${fmt(total)}・${(blob.size/1048576).toFixed(0)}MB・${W}×${H}・${ext.toUpperCase()}・毎秒${fps}コマ）`
-    + (fps<24? '<br><span style="color:var(--warn,#E8C25C)">コマ数が少なめです。「軽さ優先」を選ぶか、パソコンで書き出すと滑らかになります</span>' : "");
+}
+
+/* ====== 書き出しボタン ======
+   まず新しいやり方（再生せずにコマを組み替える）を試す。
+   だめなら昔ながらのやり方に自動で切り替える。 */
+$("exportVideo").onclick=async()=>{
+  if(exporting) return;
+  const segs=exSegs();
+  if(!segs.length){ $("exInfo").textContent="先にラリーの印をつけてください"; return; }
+  ev("3-書き出しを押した");
+  exporting=true; cancelExport=false;
+  $("exportVideo").disabled=true; $("exCancel").hidden=false;
+  $("exFill").style.width="0";
+
+  const canFast = !!(window.fastCut && window.VideoEncoder && window.VideoDecoder && videoFile);
+  if(canFast){
+    try{
+      if(typeof stopAuto==="function") stopAuto();
+      $("exInfo").textContent="動画をひらいています…";
+      const t0=performance.now();
+      const r=await fastCut({
+        file: videoFile, ranges: segs, maxWidth: maxW(),
+        onStage: st=>{ $("exInfo").textContent=st+"…"; },
+        onProgress:(d,t)=>{ $("exFill").style.width=Math.round(100*d/Math.max(t,0.001))+"%";
+          $("exInfo").textContent=`書き出し中… ${fmt(d)} / ${fmt(t)}`; },
+        cancelled:()=>cancelExport
+      });
+      if(cancelExport){ $("exInfo").textContent="やめました"; $("exFill").style.width="0"; }
+      else{
+        saveVideo(r.blob,"mp4");
+        ev("4-書き出せた");
+        const sec=(performance.now()-t0)/1000;
+        $("exFill").style.width="100%";
+        const mb=r.blob.size/1048576;
+        $("exInfo").innerHTML=`できました（${fmt(r.seconds)}・${mb<10? mb.toFixed(1):mb.toFixed(0)}MB・`
+          + `${r.width}×${r.height}・MP4）<br><span class="hint">かかった時間 ${sec.toFixed(1)}秒。`
+          + `再生せずに組み立てたので、音ズレもコマ落ちもありません。</span>`;
+      }
+      $("exportVideo").disabled=false; $("exCancel").hidden=true; exporting=false;
+      return;
+    }catch(e){
+      ev("x-新方式が使えなかった");
+      $("exInfo").innerHTML=`速いやり方が使えませんでした（${(e&&e.message)||e}）。`
+        + `<br>いままでのやり方に切り替えます…`;
+      await new Promise(r=>setTimeout(r,1200));
+      if(cancelExport){ $("exInfo").textContent="やめました";
+        $("exportVideo").disabled=false; $("exCancel").hidden=true; exporting=false; return; }
+    }
+  }
+  await slowExport(segs);
 };
 $("exCancel").onclick=()=>{ cancelExport=true; };
 
