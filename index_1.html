@@ -1,0 +1,800 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ラリーカット</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@400;500;700&family=M+PLUS+1:wght@500;700;800&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<style>
+:root{
+  --ground:#07090C;--panel:#101318;--panel2:#171B21;--ink:#EDF1F6;--ink2:#8B96A6;--line:#252A32;
+  --ball:#FF7F45;--ball-soft:#2A1710;--ok:#4FD897;--ok-soft:#0E2A1B;--blue:#5FA6F0;--ng:#F0745C;
+  --bold:"M PLUS 1","Zen Kaku Gothic New",-apple-system,"Hiragino Sans","Noto Sans JP",sans-serif;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--ground);color:var(--ink);
+  font-family:"Zen Kaku Gothic New",-apple-system,"Hiragino Sans","Noto Sans JP",sans-serif;font-size:15px;line-height:1.7}
+h1,h2,h3,.step,.btn,.tabs a,.tabs span,.stat b,.holdbar .big,b,strong,summary{font-family:var(--bold)}
+h1{letter-spacing:.01em}
+.wrap{max-width:1000px;margin:0 auto;padding-inline:20px;padding-block:28px 60px}
+.mono{font-family:"IBM Plex Mono",ui-monospace,Menlo,monospace;font-variant-numeric:tabular-nums}
+h1{margin:0 0 3px;font-size:26px;font-weight:700}
+.sub{margin:0 0 22px;color:var(--ink2);font-size:13.5px;max-width:62ch}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:18px;margin-bottom:16px}
+.step{display:flex;align-items:center;gap:10px;margin:0 0 14px;font-size:15px;font-weight:600}
+.step b{display:grid;place-items:center;width:25px;height:25px;border-radius:50%;
+  background:var(--blue);color:#0B1119;font-size:13px;flex:none}
+.btn{font:inherit;font-weight:500;cursor:pointer;border-radius:9px;border:1px solid transparent;padding:10px 18px}
+.btn-primary{background:var(--blue);color:#0B1119}
+.btn-ghost{background:transparent;color:var(--ink);border-color:var(--line)}
+.btn:disabled{opacity:.4;cursor:not-allowed}
+.btn:focus-visible{outline:2px solid var(--blue);outline-offset:2px}
+.row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+.bar{height:7px;border-radius:99px;background:var(--panel2);overflow:hidden;margin-top:12px}
+.bar i{display:block;height:100%;width:0;background:var(--blue);transition:width .2s}
+.hint{color:var(--ink2);font-size:13px}
+/* 上の切り替え（切り取る／記録する） */
+.tabs{display:flex;gap:6px;background:var(--panel2);border:1px solid var(--line);
+  border-radius:11px;padding:5px;margin:0 0 18px;max-width:430px}
+.tabs a,.tabs span{flex:1;text-align:center;padding:9px 10px;border-radius:8px;text-decoration:none;
+  color:var(--ink2);font-size:14px;font-weight:600;white-space:nowrap}
+.tabs .on{background:var(--blue);color:#0B1119}
+.tabs .soon{opacity:.4;cursor:default}
+body.nodev [data-dev]{display:none !important}
+
+video{display:block;margin:0 auto;width:100%;max-width:100%;max-height:34vh;
+  object-fit:contain;background:#000;border-radius:10px}
+@media(max-width:700px){ video{width:78%} }
+.sp{padding:8px 12px;min-width:46px;text-align:center}
+canvas#work{display:none}
+
+.holdbar{margin-top:14px;border-radius:12px;border:2px dashed var(--ball);
+  padding:26px 20px;text-align:center;user-select:none;cursor:pointer;background:var(--ball-soft)}
+.holdbar .big{color:var(--ball)}
+.holdbar.on{border-style:solid;border-color:var(--ball);background:var(--ball-soft)}
+.holdbar .big{font-size:19px;font-weight:700}
+.holdbar .small{font-size:12.5px;color:var(--ink2);margin-top:2px}
+.holdbar.on .big{color:var(--ball)}
+
+.tl{position:relative;height:36px;border-radius:8px;background:var(--panel2);
+  border:1px solid var(--line);overflow:hidden;margin-top:14px;cursor:pointer}
+.tl .r{position:absolute;top:0;bottom:0;background:var(--ball)}
+.tl .live{position:absolute;top:0;bottom:0;background:var(--ball);opacity:.55}
+.tl .cur{position:absolute;top:0;bottom:0;width:2px;background:#fff}
+.ticks{display:flex;justify-content:space-between;font-size:11.5px;color:var(--ink2);margin-top:4px}
+ul.marks{list-style:none;margin:12px 0 0;padding:0;max-height:190px;overflow-y:auto;
+  border:1px solid var(--line);border-radius:9px}
+ul.marks li{display:flex;align-items:center;gap:10px;padding:7px 12px;border-bottom:1px solid var(--line);font-size:13px}
+ul.marks li:last-child{border-bottom:none}
+ul.marks .n{color:var(--ink2);width:2.4ch}
+ul.marks .t{flex:1}
+ul.marks button{background:none;border:none;color:var(--ng);cursor:pointer;font:inherit;font-size:13px;padding:2px 6px;border-radius:5px}
+.stat{display:flex;gap:22px;flex-wrap:wrap;margin-top:12px;font-size:13.5px;color:var(--ink2)}
+.stat b{color:var(--ink);font-size:17px;font-weight:600}
+textarea{width:100%;margin-top:10px;font-family:"IBM Plex Mono",monospace;font-size:11.5px;
+  background:var(--panel2);color:var(--ink);border:1px solid var(--line);border-radius:9px;padding:10px;min-height:120px}
+.err{background:#37191A;border:1px solid var(--ng);color:var(--ng);border-radius:9px;padding:12px 14px;font-size:13.5px;margin-top:12px}
+kbd{font-family:"IBM Plex Mono",monospace;font-size:12px;background:var(--panel2);
+  border:1px solid var(--line);border-radius:5px;padding:2px 7px}
+.muted{color:var(--ink2);font-size:13px}
+.qp{display:inline-flex;align-items:center;gap:6px;padding:8px 14px;border:1px solid var(--line);
+  border-radius:9px;cursor:pointer;font-size:13.5px}
+.qp:has(input:checked){border-color:var(--blue);color:var(--blue)}
+.qp input{accent-color:var(--blue);margin:0}
+.foot{margin-top:30px;padding-top:18px;border-top:1px solid var(--line);
+  color:var(--ink2);font-size:12.5px;line-height:1.8;display:flex;flex-direction:column;gap:3px}
+.foot a{color:var(--blue)}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<nav class="tabs">
+  <span class="on">ラリーを記録する</span>
+  <span class="soon" id="cutTab">ラリーを切り取る（準備中）</span>
+</nav>
+
+<h1>ラリーを記録する</h1>
+<p class="sub">ラリーの位置を<b>自分で決めて</b>、そこだけをつないだ動画にします。
+判定器を通さないので、<b>つけた印のとおりに仕上がります</b>。動画はどこにも送られません。</p>
+
+<div class="card">
+  <p class="step"><b>1</b>動画を選ぶ</p>
+  <input type="file" id="file" accept="video/*">
+  <p class="hint" style="margin:8px 0 0">画面収録ではなく、<b>撮ったままの元ファイル</b>を選んでください。</p>
+  <div class="note" data-dev style="background:var(--panel2);border-radius:9px;padding:12px 14px;font-size:13px;color:var(--ink2);margin-top:12px">
+    <b style="color:var(--ink)">おすすめのやり方（判定器を作る人向け）</b><br>
+    体育館／大会会場／遠くから／スマホ縦向き —— <b>撮り方の違う動画を4本</b>、それぞれ3分ずつ。合計12分の作業で、いまの弱点にそのまま効きます。
+  </div>
+  <div id="err"></div>
+</div>
+
+<div class="card" id="stage" hidden>
+  <p class="step"><b>2</b>ラリーの間だけ押しっぱなしにする</p>
+  <video id="v" playsinline controls></video>
+  <div class="tl" id="tl"><div class="cur" id="cur" style="left:0"></div></div>
+  <div class="ticks"><span class="mono">0:00</span><span class="mono" id="tEnd">0:00</span></div>
+  <div class="stat">
+    <span>つけたラリー <b id="nMark">0</b>本</span>
+    <span>合計 <b id="sMark">0:00</b></span>
+    <span>動画全体の <b id="pMark">0%</b></span>
+  </div>
+  <div class="row" style="margin-top:12px">
+    <button class="btn btn-ghost" id="back">5秒もどる</button>
+    <span class="hint">速さ</span>
+    <button class="btn btn-ghost sp" data-s="1">1x</button>
+    <button class="btn btn-ghost sp" data-s="1.5">1.5x</button>
+    <button class="btn btn-ghost sp" data-s="2">2x</button>
+  </div>
+  <div class="holdbar" id="hold">
+    <div class="big" id="holdBig">スペースキーを押しっぱなし</div>
+    <div class="small" id="holdSmall">ラリーが始まったら押す。終わったら離す。この枠をマウスで押しても同じです</div>
+  </div>
+  <div class="row" style="margin-top:12px">
+    <button class="btn btn-ghost" id="undoBtn" disabled>1つ前を取り消す</button>
+    <span class="hint" id="impInfo">押し間違えたら、これで1つ前を取り消せます</span>
+  </div>
+  <details class="tips" style="margin-top:14px">
+    <summary>つけた印を見返す・直す</summary>
+    <div style="padding:0 14px 14px">
+  <div class="row" style="margin-top:12px">
+    <button class="btn btn-ghost" id="autoBtn">ラリーだけ連続再生</button>
+    <button class="btn btn-ghost" id="prevBtn">前のラリー</button>
+    <button class="btn btn-ghost" id="nextBtn">次のラリー</button>
+  </div>
+  <p class="hint" id="autoInfo" style="margin:6px 0 0">つけた印が合っているか、続けて再生して確かめられます</p>
+
+  <div class="row" id="editBar" hidden style="margin-top:10px;padding:10px 12px;background:var(--panel2);border-radius:10px">
+    <span class="hint"><b id="editWho">—</b></span>
+    <button class="btn btn-ghost" id="setA">ここを始めに</button>
+    <button class="btn btn-ghost" id="setB">ここを終わりに</button>
+    <button class="btn btn-ghost" id="editOff">やめる</button>
+  </div>
+  <ul class="marks" id="marks"></ul>
+  <p class="muted" style="margin-top:10px">押し間違えたら、下の一覧から消せます。<kbd>Z</kbd>で直前を取り消し。<kbd>←</kbd><kbd>→</kbd>でラリーを行き来できます。</p>
+    <div class="row" style="margin-top:14px">
+      <button class="btn btn-ghost" id="restoreBtn" hidden>前回の続きから</button>
+      <button class="btn btn-ghost" id="clearBtn">ぜんぶ消す</button>
+      <button class="btn btn-ghost" id="impBtn" data-dev>正解を読み込む（AIの答えなど）</button>
+      <input type="file" id="impFile" accept=".json" hidden>
+      <button class="btn btn-primary" id="goFeat" data-dev hidden>動きを取り出すへ ↓</button>
+    </div>
+    </div>
+  </details>
+</div>
+
+<div class="card" id="vidCard" hidden>
+  <p class="step"><b>3</b>ラリーだけの動画にする</p>
+  <p class="hint" style="margin:0 0 12px">手でつけた印のとおりに切り取って保存します。判定器を通さないので、<b>印どおりの動画</b>になります。</p>
+
+  <div class="row" style="margin-bottom:14px">
+    <span class="hint" style="width:100%;margin:0 0 4px">画質</span>
+    <label class="qp"><input type="radio" name="q" value="1280"> 軽さ優先</label>
+    <label class="qp"><input type="radio" name="q" value="1920" checked> 高画質</label>
+    <label class="qp"><input type="radio" name="q" value="3840"> 元のまま</label>
+    <span class="hint" id="qInfo" style="width:100%;margin:6px 0 0"></span>
+  </div>
+
+  <div class="row" style="margin-bottom:14px">
+    <span class="hint" style="width:100%;margin:0 0 4px">前後の余裕（書き出す動画が変わります）</span>
+    <span class="hint">前に足す</span>
+    <input type="range" id="head" min="0" max="3" step="0.2" value="0" style="width:110px;accent-color:var(--blue)">
+    <span class="mono" id="headV" style="color:var(--ink2)">0.0秒</span>
+    <span class="hint" style="margin-left:10px">終わりに足す</span>
+    <input type="range" id="tail" min="0" max="3" step="0.2" value="1.2" style="width:110px;accent-color:var(--blue)">
+    <span class="mono" id="tailV" style="color:var(--ink2)">1.2秒</span>
+  </div>
+  <p class="hint" style="margin:0 0 14px">
+    <b>終わりに足す</b>＝球が落ちて点が決まるまで見えるように、印の終わりを延ばします。<br>
+    <b>前に足す</b>＝倍速で印をつけて押し遅れたときに、始まりを戻します。</p>
+  <div class="row">
+    <button class="btn btn-primary" id="exportVideo">ラリーだけの動画を書き出す</button>
+    <button class="btn btn-ghost" id="exCancel" hidden>やめる</button>
+    <span class="hint" id="exInfo"></span>
+  </div>
+  <div class="bar"><i id="exFill"></i></div>
+  <p class="hint" style="margin:10px 0 0">実際に最初から最後まで再生しながら録ります。<b>残る長さと同じだけ時間がかかります</b>。
+  カクついたり画質が落ちるときは、<b>パソコンで書き出す</b>か「軽さ優先」を選んでください。
+  終わるまで画面を消さず、他のアプリに移らないでください。</p>
+</div>
+
+<div class="card" id="featCard" data-dev hidden>
+  <p class="step"><b>作</b>選手の動きを取り出す<span class="hint" style="font-weight:400;margin-left:8px">判定器を作る人向け</span></p>
+  <p class="hint" style="margin:0 0 12px">正解をつけ終わったら押してください。<b>正解をつけた範囲だけ</b>にすると、待ち時間が短くなります。</p>
+
+  <div class="row" style="margin-bottom:12px">
+    <span class="hint">どこから</span>
+    <input type="number" id="rStart" value="0" min="0" step="0.5" style="width:6.5em;font:inherit;padding:8px;border-radius:8px;
+      background:var(--panel2);color:var(--ink);border:1px solid var(--line)">
+    <span class="hint">分から</span>
+    <input type="number" id="rLen" value="3" min="0.5" step="0.5" style="width:6.5em;font:inherit;padding:8px;border-radius:8px;
+      background:var(--panel2);color:var(--ink);border:1px solid var(--line)">
+    <span class="hint">分ぶん</span>
+    <button class="btn btn-ghost" id="rAll">動画ぜんぶ</button>
+    <button class="btn btn-ghost" id="rMarks">印のあるところ</button>
+  </div>
+  <p class="hint" id="rInfo" style="margin:0 0 12px"></p>
+
+  <button class="btn btn-primary" id="run">動きを取り出す</button>
+  <span class="hint" id="fstatus"></span>
+  <div class="bar"><i id="fill"></i></div>
+</div>
+
+<div class="card" id="outCard" data-dev hidden>
+  <p class="step"><b>作</b>正解ファイルを書き出す<span class="hint" style="font-weight:400;margin-left:8px">判定器を作る人向け</span></p>
+  <div class="row">
+    <button class="btn btn-primary" id="dl">ファイルに保存</button>
+    <button class="btn btn-ghost" id="copy">コピー</button>
+    <span class="hint" id="outInfo"></span>
+  </div>
+  <textarea id="out" readonly></textarea>
+</div>
+
+<canvas id="work"></canvas>
+
+<footer class="foot">
+  <span>動画はこの端末の中だけで処理され、どこにも送られません。</span>
+  <span>※どこでつまずくかを知るために、<b>ページを開いた回数とボタンが押された回数だけ</b>を記録しています。個人は特定しません。</span>
+  <a href="privacy.html">プライバシーポリシー</a>
+</footer>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/pose-detection@2.1.3/dist/pose-detection.min.js"></script>
+<script>
+const $=id=>document.getElementById(id);
+
+/* ---------- アクセス解析（GoatCounter） ----------
+   goatcounter.com で登録したコード名を GC_CODE に入れると数えはじめる。
+   空のままなら読み込みもしない＝何も記録しない。
+   数えるのは「開いた回数」と「どのボタンが押されたか」だけ。
+   動画も、そのファイル名も、この端末から出ない。 */
+const GC_CODE = "rallycut";         /* goatcounter.com のアカウント名 */
+if(GC_CODE){
+  const gs=document.createElement("script");
+  gs.async=true; gs.src="//gc.zgo.at/count.js";
+  gs.setAttribute("data-goatcounter","https://"+GC_CODE+".goatcounter.com/count");
+  document.head.appendChild(gs);
+}
+/* 出来事をひとつ数える。失敗しても本体は止めない */
+function ev(name){
+  try{ if(window.goatcounter && goatcounter.count) goatcounter.count({path:name,event:true}); }catch(e){}
+}
+let evMarked=false;
+/* URLに ?dev が付いていないときは、判定器を作る人向けのボタンを隠す */
+if(!new URLSearchParams(location.search).has("dev")) document.body.classList.add("nodev");
+else {
+  // 作った人だけ、まだ準備中の「切り取る」ページへ行けるようにする
+  const t=$("cutTab");
+  if(t){ const a=document.createElement("a"); a.href="cut.html?dev";
+    a.textContent="ラリーを切り取る"; t.replaceWith(a); }
+}
+const fmt=s=>Math.floor(Math.max(0,s)/60)+":"+String(Math.floor(Math.max(0,s)%60)).padStart(2,"0");
+const tick=()=>new Promise(r=>setTimeout(r,0));
+const v=$("v"), work=$("work");
+let duration=0, marks=[], holdStart=null, fileName="", feats=null;
+
+/* ---------- 1. 動画 ---------- */
+$("file").onchange=e=>{
+  const f=e.target.files[0]; if(!f) return;
+  ev("1-動画を選んだ"); evMarked=false;
+  fileName=f.name; $("err").innerHTML="";
+  v.src=URL.createObjectURL(f);
+  v.onloadedmetadata=()=>{
+    duration=v.duration; $("tEnd").textContent=fmt(duration);
+    $("stage").hidden=false; $("vidCard").hidden=false; $("featCard").hidden=false; $("outCard").hidden=true;
+    // 前に途中までやっていたら、戻せるようにしておく
+    const d = saved();
+    $("restoreBtn").hidden = !d;
+    if(d) $("impInfo").innerHTML = `前に <b>${d.marks.length}本</b> つけた途中があります。「前回の続きから」で戻せます`;
+    marks=[]; feats=null; draw();
+    $("rStart").value=0; $("rLen").value=Math.min(3,+(duration/60).toFixed(1)); rInfo();
+    qInfo();
+  };
+};
+
+/* ---------- 2. 正解づけ ---------- */
+function startHold(){
+  if(autoOn) stopAuto("");
+  if(holdStart!==null) return;
+  holdStart=v.currentTime;
+  $("hold").classList.add("on");
+  $("holdBig").textContent="ラリー記録中…";
+}
+function endHold(){
+  if(holdStart===null) return;
+  const a=holdStart, b=v.currentTime;
+  holdStart=null;
+  $("hold").classList.remove("on");
+  $("holdBig").textContent=HOLD_BIG;
+  if(b-a>=0.6) marks.push([a,b]);
+  if(marks.length && !evMarked){ evMarked=true; ev("2-印をつけた"); }
+  marks.sort((x,y)=>x[0]-y[0]);
+  draw(); keep();
+}
+/* 端末に合わせて文言を変える（スマホにスペースキーは無い） */
+const TOUCH = window.matchMedia("(hover: none)").matches;
+const HOLD_BIG = TOUCH ? "ここを押しっぱなし" : "スペースキーを押しっぱなし";
+$("holdBig").textContent = HOLD_BIG;
+if(TOUCH) $("holdSmall").textContent = "ラリーが始まったら押す。終わったら離す。指を離すとそこで1本になります";
+$("hold").addEventListener("mousedown",startHold);
+document.addEventListener("mouseup",endHold);
+$("hold").addEventListener("touchstart",e=>{e.preventDefault();startHold()},{passive:false});
+document.addEventListener("touchend",endHold);
+document.addEventListener("keydown",e=>{
+  if(/INPUT|TEXTAREA/.test(e.target.tagName)) return;
+  if(e.code==="Space"){ e.preventDefault(); if(!e.repeat) startHold(); }
+  else if(e.key.toLowerCase()==="z"){ undo(); }
+  else if(e.key==="ArrowLeft"){ e.preventDefault(); marks.length?jump(-1):(v.currentTime=Math.max(0,v.currentTime-5)); }
+  else if(e.key==="ArrowRight"){ e.preventDefault(); marks.length?jump(1):(v.currentTime=Math.min(duration,v.currentTime+5)); }
+});
+document.addEventListener("keyup",e=>{ if(e.code==="Space"){ e.preventDefault(); endHold(); }});
+
+function draw(){
+  const tl=$("tl");
+  [...tl.querySelectorAll(".r,.live")].forEach(e=>e.remove());
+  for(const [a,b] of marks){
+    const d=document.createElement("div"); d.className="r";
+    d.style.left=(100*a/duration)+"%";
+    d.style.width=Math.max(0.3,100*(b-a)/duration)+"%";
+    tl.appendChild(d);
+  }
+  if(holdStart!==null){
+    const d=document.createElement("div"); d.className="live";
+    d.style.left=(100*holdStart/duration)+"%";
+    d.style.width=Math.max(0.3,100*(v.currentTime-holdStart)/duration)+"%";
+    tl.appendChild(d);
+  }
+  if($("rInfo")) rInfo();
+  if(marks.length){ $("featCard").hidden=false; $("goFeat").hidden=false; }
+  const tot=marks.reduce((s,[a,b])=>s+(b-a),0);
+  $("nMark").textContent=marks.length;
+  $("sMark").textContent=fmt(tot);
+  $("pMark").textContent=duration?Math.round(100*tot/duration)+"%":"0%";
+  const ul=$("marks"); ul.innerHTML="";
+  marks.forEach(([a,b],i)=>{
+    const li=document.createElement("li");
+    li.innerHTML=`<span class="n mono">${i+1}</span>`+
+      `<span class="t mono">${fmt(a)} – ${fmt(b)}　<span style="color:var(--ink2)">${(b-a).toFixed(1)}s</span></span>`;
+    const jump=document.createElement("button"); jump.textContent="見る";
+    jump.style.color="var(--blue)";
+    jump.onclick=()=>{v.currentTime=a;v.play()};
+    const del=document.createElement("button"); del.textContent="消す";
+    del.onclick=(e)=>{ e.stopPropagation(); marks.splice(i,1); if(editAt===i) editAt=-1; draw(); keep(); };
+    li.append(jump,del); ul.appendChild(li);
+    li.style.cursor="pointer";
+    li.onclick=()=>{ editAt = (editAt===i? -1 : i); draw(); };
+    if(editAt===i) li.style.outline="2px solid var(--ball)";
+  });
+  $("undoBtn").disabled = !marks.length;
+  const eb=$("editBar");
+  eb.hidden = editAt<0 || !marks[editAt];
+  if(!eb.hidden){
+    const [a,b]=marks[editAt];
+    $("editWho").textContent=`${editAt+1}本目 ${fmt(a)} – ${fmt(b)}（${(b-a).toFixed(1)}秒）を直す`;
+  }
+}
+
+/* ---------- 直す・取り消す・控えておく ---------- */
+let editAt = -1;
+const SKEY = "rallycut.marks.v1";
+function keep(){
+  try{ localStorage.setItem(SKEY, JSON.stringify(
+    {file:fileName, dur:+(duration||0).toFixed(2), marks:marks, at:Date.now()})); }catch(e){}
+}
+function saved(){
+  try{
+    const d=JSON.parse(localStorage.getItem(SKEY)||"null");
+    if(!d||!Array.isArray(d.marks)||!d.marks.length) return null;
+    if(d.file!==fileName || Math.abs(d.dur-duration)>0.6) return null;
+    return d;
+  }catch(e){ return null; }
+}
+function undo(){ if(!marks.length) return; marks.pop(); editAt=-1; draw(); keep(); }
+$("undoBtn").onclick = undo;
+$("editOff").onclick = ()=>{ editAt=-1; draw(); };
+$("setA").onclick = ()=>{
+  if(editAt<0) return;
+  const t=v.currentTime;
+  if(t >= marks[editAt][1]-0.3){ $("impInfo").textContent="終わりより前にしてください"; return; }
+  marks[editAt][0]=t; marks.sort((x,y)=>x[0]-y[0]);
+  editAt=marks.findIndex(m=>m[0]===t); draw(); keep();
+};
+$("setB").onclick = ()=>{
+  if(editAt<0) return;
+  const t=v.currentTime;
+  if(t <= marks[editAt][0]+0.3){ $("impInfo").textContent="始めより後にしてください"; return; }
+  marks[editAt][1]=t; draw(); keep();
+};
+$("restoreBtn").onclick = ()=>{
+  const d=saved(); if(!d) return;
+  marks=d.marks.map(x=>[+x[0],+x[1]]); editAt=-1; draw();
+  $("restoreBtn").hidden=true;
+  $("impInfo").innerHTML=`<b>${marks.length}本</b>を戻しました。`;
+};
+v.addEventListener("timeupdate",()=>{
+  $("cur").style.left=(100*v.currentTime/duration)+"%";
+  if(holdStart!==null) draw();
+});
+$("back").onclick=()=>v.currentTime=Math.max(0,v.currentTime-5);
+function setSpeed(x){
+  v.playbackRate=x;
+  document.querySelectorAll(".sp").forEach(b=>{
+    const on = +b.dataset.s===x;
+    b.style.background = "transparent";
+    b.style.color = on? "var(--blue)" : "var(--ink2)";
+    b.style.borderColor = on? "var(--blue)" : "var(--line)";
+    b.style.fontWeight = on? "700" : "500";
+  });
+}
+document.querySelectorAll(".sp").forEach(b=>b.onclick=()=>setSpeed(+b.dataset.s));
+setSpeed(1);
+$("tl").onclick=e=>{const r=e.currentTarget.getBoundingClientRect();
+  v.currentTime=duration*(e.clientX-r.left)/r.width;};
+
+/* ---------- ラリーだけ連続再生（確認用） ---------- */
+let autoOn=false, autoIdx=-1;
+function autoWatch(){
+  if(!autoOn) return;
+  const m=marks[autoIdx];
+  if(m && v.currentTime>=m[1]+(+$("tail").value||0)){
+    if(autoIdx+1<marks.length){ autoIdx++; v.currentTime=marks[autoIdx][0]; showAuto(); }
+    else { stopAuto("最後まで見ました"); return; }
+  }
+  if(!v.paused) requestAnimationFrame(autoWatch);
+}
+function showAuto(){
+  const m=marks[autoIdx];
+  $("autoInfo").innerHTML = m
+    ? `<b>ラリー ${autoIdx+1}/${marks.length}</b>　<span class="mono">${fmt(m[0])} – ${fmt(m[1])}（${(m[1]-m[0]).toFixed(1)}秒）</span>`
+    : "";
+  const ul=$("marks");
+  [...ul.children].forEach((li,i)=>li.style.background = i===autoIdx ? "var(--panel2)" : "");
+  if(ul.children[autoIdx]) ul.children[autoIdx].scrollIntoView({block:"nearest"});
+}
+function startAuto(){
+  if(!marks.length){ $("autoInfo").textContent="先に正解を読み込むか、印をつけてください"; return; }
+  autoOn=true;
+  $("autoBtn").textContent="連続再生をとめる";
+  let i=marks.findIndex(m=>v.currentTime<m[1]);
+  autoIdx = i<0 ? 0 : i;
+  const hd=+$("head").value||0;
+  if(v.currentTime<marks[autoIdx][0]-hd) v.currentTime=Math.max(0,marks[autoIdx][0]-hd);
+  v.play(); showAuto();
+  requestAnimationFrame(autoWatch);
+}
+function stopAuto(msg){
+  autoOn=false; v.pause();
+  $("autoBtn").textContent="ラリーだけ連続再生";
+  if(msg) $("autoInfo").textContent=msg;
+}
+function jump(d){
+  if(!marks.length) return;
+  autoIdx=Math.max(0,Math.min(marks.length-1,(autoIdx<0?0:autoIdx)+d));
+  v.currentTime=Math.max(0,marks[autoIdx][0]-(+$("head").value||0));
+  showAuto();
+  if(!autoOn){ autoOn=true; $("autoBtn").textContent="連続再生をとめる"; }
+  v.play(); requestAnimationFrame(autoWatch);
+}
+$("tail").oninput=()=>$("tailV").textContent=(+$("tail").value).toFixed(1)+"秒";
+$("head").oninput=()=>$("headV").textContent=(+$("head").value).toFixed(1)+"秒";
+$("autoBtn").onclick=()=>autoOn?stopAuto("とめました"):startAuto();
+$("nextBtn").onclick=()=>jump(1);
+$("prevBtn").onclick=()=>jump(-1);
+v.addEventListener("play",()=>{ if(autoOn) requestAnimationFrame(autoWatch); });
+
+/* ---------- 正解を読み込む ---------- */
+$("impBtn").onclick=()=>$("impFile").click();
+$("clearBtn").onclick=()=>{ marks=[]; editAt=-1; draw(); keep(); $("impInfo").textContent="ぜんぶ消しました"; };
+$("impFile").onchange=e=>{
+  const f=e.target.files[0]; if(!f) return;
+  const r=new FileReader();
+  r.onload=()=>{
+    try{
+      const d=JSON.parse(r.result);
+      const L=Array.isArray(d)?d:d.labels;
+      if(!Array.isArray(L)||!L.length) throw new Error("labels が見つかりません");
+      const add=L.map(x=>[+x[0],+x[1]]).filter(x=>isFinite(x[0])&&isFinite(x[1])&&x[1]>x[0]);
+      marks=add.sort((a,b)=>a[0]-b[0]);
+      editAt=-1; draw(); keep();
+      $("featCard").hidden=false;
+      $("rStart").value=0; $("rLen").value=(duration/60).toFixed(1); rInfo();
+      $("impInfo").innerHTML=`<b>${marks.length}本</b>読み込みました。`
+        + (d.video? `（${d.video}）`:"")
+        + ` 確かめたら、下の<b>「3 選手の動きを取り出す」</b>へ`;
+      $("goFeat").hidden=false;
+    }catch(err){ $("impInfo").textContent="読み込めませんでした："+err.message; }
+  };
+  r.readAsText(f);
+};
+
+$("goFeat").onclick=()=>{ $("featCard").hidden=false; $("featCard").scrollIntoView({block:"center",behavior:"smooth"}); };
+
+/* ---------- 解析する範囲 ---------- */
+function range(){
+  const a = Math.max(0, (+$("rStart").value || 0) * 60);
+  const b = Math.min(duration, a + Math.max(30, (+$("rLen").value || 3) * 60));
+  return [a, b];
+}
+function rInfo(){
+  const [a,b] = range();
+  const inside = marks.filter(([x,y]) => y > a && x < b).length;
+  const mins = (b - a) / 60;
+  $("rInfo").innerHTML = `解析するのは <b>${fmt(a)} 〜 ${fmt(b)}</b>（${mins.toFixed(1)}分）。`
+    + `この中についている印は <b>${inside}本</b>。待ち時間は <b>${Math.max(1, Math.round(mins * 0.7))}分</b>ほど。`
+    + (inside === 0 ? '<br><span style="color:var(--ng)">この範囲に印がありません。範囲か印を見直してください。</span>' : "");
+}
+["rStart","rLen"].forEach(id => $(id).oninput = rInfo);
+$("rAll").onclick = () => { $("rStart").value = 0; $("rLen").value = (duration/60).toFixed(1); rInfo(); };
+$("rMarks").onclick = () => {
+  if(!marks.length) return;
+  const a = Math.max(0, marks[0][0] - 5), b = Math.min(duration, marks[marks.length-1][1] + 5);
+  $("rStart").value = (a/60).toFixed(1); $("rLen").value = ((b-a)/60).toFixed(1); rInfo();
+};
+
+/* ---------- 3. 姿勢から動きを取り出す ---------- */
+const FPS=4;
+const NAME=i=>["nose","left_eye","right_eye","left_ear","right_ear","left_shoulder","right_shoulder",
+  "left_elbow","right_elbow","left_wrist","right_wrist","left_hip","right_hip",
+  "left_knee","right_knee","left_ankle","right_ankle"][i];
+
+$("run").onclick=async()=>{
+  $("run").disabled=true;
+  let det;
+  try{
+    $("fstatus").textContent="姿勢検出モデルを読み込み中";
+    det=await poseDetection.createDetector(poseDetection.SupportedModels.MoveNet,
+      {modelType:poseDetection.movenet.modelType.MULTIPOSE_LIGHTNING});
+  }catch(err){
+    $("err").innerHTML='<div class="err">モデルを読み込めませんでした。ネットにつながった状態で開いてください。<br>'+err.message+'</div>';
+    $("run").disabled=false; return;
+  }
+  const W=512; work.width=W; work.height=Math.round(W*v.videoHeight/v.videoWidth);
+  const g=work.getContext("2d",{willReadFrequently:true});
+  const seek=t=>new Promise(r=>{v.currentTime=Math.min(t,duration-0.05);
+    v.addEventListener("seeked",()=>r(),{once:true});});
+  v.pause();
+
+  const [T0,T1]=range();
+  const N=Math.floor((T1-T0)*FPS), raw=[], startedAt=performance.now();
+  for(let i=0;i<N;i++){
+    const t=T0+i/FPS;
+    await seek(t);
+    g.drawImage(v,0,0,work.width,work.height);
+    const poses=await det.estimatePoses(work);
+    /* 画面の中央寄りで、大きく写っている2人＝手前の台の選手とみなす */
+    const ppl=poses.map(p=>{
+      const kp={}; p.keypoints.forEach((k,j)=>{ if(k.score>0.25) kp[NAME(j)]=[k.x,k.y]; });
+      const sh=kp.left_shoulder&&kp.right_shoulder
+        ? [(kp.left_shoulder[0]+kp.right_shoulder[0])/2,(kp.left_shoulder[1]+kp.right_shoulder[1])/2] : null;
+      const hp=kp.left_hip&&kp.right_hip
+        ? [(kp.left_hip[0]+kp.right_hip[0])/2,(kp.left_hip[1]+kp.right_hip[1])/2] : null;
+      if(!sh||!hp) return null;
+      const scale=Math.max(8,Math.hypot(sh[0]-hp[0],sh[1]-hp[1]));  // 胴の長さ＝体の大きさ
+      return {kp,center:[(sh[0]+hp[0])/2,(sh[1]+hp[1])/2],scale};
+    }).filter(Boolean)
+      .filter(p=>p.center[0]>work.width*0.15&&p.center[0]<work.width*0.85&&p.center[1]>work.height*0.10)
+      .sort((a,b)=>b.scale-a.scale).slice(0,2);
+    raw.push({t,ppl});
+    if(i%4===0){
+      const done=(i+1)/N, el=(performance.now()-startedAt)/1000;
+      const left=done>0.02? Math.round(el*(1-done)/done) : null;
+      $("fstatus").textContent=`${fmt(t)} / ${fmt(T1)}`+(left!==null?`　のこり約${fmt(left)}`:"");
+      $("fill").style.width=Math.round(100*done)+"%"; await tick(); }
+  }
+
+  /* 前のコマと結びつけて、部位ごとの速さを出す（体の大きさで割る） */
+  const F=[];
+  const parts={wrist:["left_wrist","right_wrist"],elbow:["left_elbow","right_elbow"],
+               ankle:["left_ankle","right_ankle"],shoulder:["left_shoulder","right_shoulder"]};
+  for(let i=0;i<raw.length;i++){
+    const cur=raw[i].ppl, prev=i?raw[i-1].ppl:[];
+    const rec={t:+raw[i].t.toFixed(3), n:cur.length,
+      scale:+(cur.reduce((s,p)=>s+p.scale,0)/Math.max(cur.length,1)).toFixed(2)};
+    for(const k in parts) rec[k]=0;
+    rec.center=0; rec.all=0;
+    let cnt=0;
+    for(const p of cur){
+      let best=null,bd=1e9;
+      for(const q of prev){const d=Math.hypot(p.center[0]-q.center[0],p.center[1]-q.center[1]);
+        if(d<bd){bd=d;best=q;}}
+      if(!best||bd>p.scale*3) continue;
+      cnt++;
+      rec.center+=bd/p.scale;
+      for(const k in parts){
+        let s=0,c=0;
+        for(const nm of parts[k]) if(p.kp[nm]&&best.kp[nm]){
+          s+=Math.hypot(p.kp[nm][0]-best.kp[nm][0],p.kp[nm][1]-best.kp[nm][1])/p.scale; c++; }
+        if(c) rec[k]+=s/c;
+      }
+      let s=0,c=0;
+      for(const nm in p.kp) if(best.kp[nm]){
+        s+=Math.hypot(p.kp[nm][0]-best.kp[nm][0],p.kp[nm][1]-best.kp[nm][1])/p.scale; c++; }
+      if(c) rec.all+=s/c;
+    }
+    if(cnt){ for(const k of ["center","all",...Object.keys(parts)]) rec[k]=+(rec[k]/cnt).toFixed(4); }
+    rec.label = marks.some(([a,b])=>rec.t>=a&&rec.t<b) ? 1 : 0;
+    F.push(rec);
+  }
+  feats=F;
+  $("fstatus").textContent="完了";
+  $("fill").style.width="100%";
+  $("outCard").hidden=false;
+  const clipped=marks.filter(([a,b])=>b>T0&&a<T1)
+    .map(([a,b])=>[+Math.max(a,T0).toFixed(2),+Math.min(b,T1).toFixed(2)]);
+  const data={video:fileName,duration:+T1.toFixed(2),fps:FPS,range:[+T0.toFixed(2),+T1.toFixed(2)],
+    labels:clipped,features:F};
+  const json=JSON.stringify(data);
+  $("out").value=json.length>4000? json.slice(0,4000)+"\n…（全体はファイルに保存してください）" : json;
+  const rally=F.filter(f=>f.label===1).length;
+  $("outInfo").textContent=`${fmt(T0)}〜${fmt(T1)} / ${F.length}コマ / ラリー ${clipped.length}本・${rally}コマ（${Math.round(100*rally/F.length)}%）`;
+  $("dl").onclick=()=>{
+    const blob=new Blob([json],{type:"application/json"});
+    const a=document.createElement("a");
+    a.href=URL.createObjectURL(blob);
+    a.download=(fileName.replace(/\.[^.]+$/,""))+`_${Math.round(T0)}-${Math.round(T1)}秒_ラリー正解.json`;
+    document.body.appendChild(a); a.click(); a.remove();
+  };
+  $("copy").onclick=()=>navigator.clipboard.writeText(json).then(()=>$("outInfo").textContent="コピーしました");
+  $("run").disabled=false;
+};
+
+/* ---------- ラリーだけの動画を書き出す ---------- */
+/* ---------- 書き出す大きさ ---------- */
+function maxW(){
+  const r=document.querySelector('input[name="q"]:checked');
+  return r? +r.value : 1920;
+}
+function qInfo(){
+  const el=$("qInfo"); if(!el) return;
+  const sw=v.videoWidth||0, sh=v.videoHeight||0;
+  if(!sw){ el.textContent=""; return; }
+  const W=Math.round(Math.min(maxW(),sw)/2)*2, H=Math.round(sh*W/sw/2)*2;
+  let msg=`元の動画 ${sw}×${sh} → 書き出し <b>${W}×${H}</b>`;
+  if(W>=2560) msg+='　<span style="color:var(--warn,#E8C25C)">大きすぎて途中でコマが飛ぶことがあります</span>';
+  else if(W<sw) msg+="　（小さくなります）";
+  else msg+="　（そのままの大きさ）";
+  el.innerHTML=msg;
+}
+document.querySelectorAll('input[name="q"]').forEach(r=>r.onchange=qInfo);
+
+/* 仕組み：印の区間を順番に再生し、その絵をキャンバスに写して録画する */
+let audioCtx=null, audioOut=null, exporting=false, cancelExport=false;
+function exSegs(){
+  const tail=+$("tail").value||0;
+  const head=+$("head").value||0;
+  const r=marks.map(([a,b])=>[Math.max(0,a-head),Math.min(duration,b+tail)]).sort((x,y)=>x[0]-y[0]);
+  const out=[];
+  for(const x of r){ if(out.length && x[0]<=out[out.length-1][1]) out[out.length-1][1]=x[1]; else out.push(x); }
+  return out;
+}
+async function setupAudio(){
+  if(audioOut!==null) return audioOut;
+  try{
+    const AC=window.AudioContext||window.webkitAudioContext;
+    if(!AC){ audioOut=false; return false; }
+    audioCtx=new AC();
+    if(audioCtx.state==="suspended") await audioCtx.resume();
+    if(audioCtx.state!=="running"){ audioOut=false; return false; }
+    const src=audioCtx.createMediaElementSource(v);
+    const dest=audioCtx.createMediaStreamDestination();
+    src.connect(dest); src.connect(audioCtx.destination);
+    audioOut=dest;
+  }catch(e){ audioOut=false; }
+  return audioOut;
+}
+function pickType(){
+  const list=["video/mp4","video/webm;codecs=vp9,opus","video/webm;codecs=vp8,opus","video/webm"];
+  for(const t of list) if(window.MediaRecorder && MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(t)) return t;
+  return "";
+}
+const exSeek=t=>new Promise(r=>{
+  let ok=false; const fin=()=>{ if(!ok){ ok=true; r(); } };
+  v.addEventListener("seeked",fin,{once:true});
+  setTimeout(fin,3000);
+  v.currentTime=Math.max(0,Math.min(t,duration-0.05));
+});
+$("exportVideo").onclick=async()=>{
+  if(exporting) return;
+  const segs=exSegs();
+  if(!segs.length){ $("exInfo").textContent="先にラリーの印をつけてください"; return; }
+  if(!window.MediaRecorder || !HTMLCanvasElement.prototype.captureStream){
+    $("exInfo").innerHTML='<b style="color:var(--ng)">この端末では動画の書き出しができません。</b>パソコンでお試しください。';
+    return;
+  }
+  ev("3-書き出しを押した");
+  if(typeof stopAuto==="function") stopAuto();
+  exporting=true; cancelExport=false;
+  $("exportVideo").disabled=true; $("exCancel").hidden=false; $("exInfo").textContent="準備中…";
+
+  const total=segs.reduce((s,[a,b])=>s+(b-a),0);
+  /* 大きさ：元の動画に合わせる（選んだ上限まで）。偶数にそろえる */
+  const srcW=v.videoWidth||1280, srcH=v.videoHeight||720;
+  const W=Math.round(Math.min(maxW(), srcW)/2)*2;
+  const H=Math.round(srcH*W/srcW/2)*2;
+  const cv=document.createElement("canvas"); cv.width=W; cv.height=H;
+  const g=cv.getContext("2d",{alpha:false});
+  try{ g.imageSmoothingQuality="high"; }catch(e){}
+  /* コマ送り：元の動画のコマ1枚ごとに録る。できない端末は毎秒30コマで代用 */
+  let step = typeof v.requestVideoFrameCallback==="function";
+  let stream = cv.captureStream(step?0:30);
+  let vtrack = stream.getVideoTracks()[0];
+  if(step && !(vtrack && typeof vtrack.requestFrame==="function")){
+    step=false; stream=cv.captureStream(30); vtrack=stream.getVideoTracks()[0];
+  }
+  const au=await setupAudio();
+  if(au){ try{ au.stream.getAudioTracks().forEach(tr=>stream.addTrack(tr)); }catch(e){} }
+
+  const mime=pickType();
+  let rec;
+  /* 画の細かさ：大きさに見合った量を渡す。少なすぎると動きの速い所がにじむ */
+  const bits=Math.min(24000000, Math.max(4000000, Math.round(W*H*30*0.18)));
+  try{ rec=new MediaRecorder(stream, mime?{mimeType:mime,videoBitsPerSecond:bits}:undefined); }
+  catch(e){ try{ rec=new MediaRecorder(stream); }catch(e2){
+    $("exInfo").textContent="この端末では書き出せませんでした（"+e2.message+"）";
+    $("exportVideo").disabled=false; $("exCancel").hidden=true; exporting=false; return; } }
+  const parts=[];
+  rec.ondataavailable=e=>{ if(e.data && e.data.size) parts.push(e.data); };
+  const stopped=new Promise(r=>{ rec.onstop=r; });
+
+  const wasMuted=v.muted, wasRate=v.playbackRate;
+  v.muted=false; v.playbackRate=1;
+  let drawing=true, gen=0, nFrame=0;
+  const loop=(my)=>{
+    if(!drawing || my!==gen) return;
+    try{ g.drawImage(v,0,0,W,H); if(step) vtrack.requestFrame(); nFrame++; }catch(e){}
+    if(step) v.requestVideoFrameCallback(()=>loop(my));
+    else requestAnimationFrame(()=>loop(my));
+  };
+  /* 再生が止まるとコマ送りも止まるので、区間ごとに掛け直す */
+  const arm=()=>{ gen++; loop(gen); };
+  await exSeek(segs[0][0]);
+  arm();
+
+  const t0=performance.now(); let written=0;
+  rec.start(1000);
+  try{
+    for(let i=0;i<segs.length;i++){
+      if(cancelExport) break;
+      const [a0,b0]=segs[i];
+      if(i>0){ try{ rec.pause(); }catch(e){} await exSeek(a0); try{ rec.resume(); }catch(e){} }
+      try{ await v.play(); }catch(e){}
+      arm();
+      await new Promise(r=>{
+        const watch=()=>{ if(cancelExport || v.currentTime>=b0-0.02 || v.ended){ r(); return; } requestAnimationFrame(watch); };
+        watch();
+      });
+      v.pause();
+      written+=b0-a0;
+      const el=(performance.now()-t0)/1000;
+      const left=written>0.5? Math.round(el*(total-written)/written) : null;
+      $("exInfo").textContent=`書き出し中… ${i+1}/${segs.length}本`+(left!==null?`　のこり約${fmt(left)}`:"");
+      $("exFill").style.width=Math.round(100*written/total)+"%";
+    }
+  }finally{
+    drawing=false;
+    try{ rec.stop(); }catch(e){}
+    await stopped;
+    v.pause(); v.muted=wasMuted; v.playbackRate=wasRate;
+    $("exportVideo").disabled=false; $("exCancel").hidden=true; exporting=false;
+  }
+  if(cancelExport){ $("exInfo").textContent="やめました"; $("exFill").style.width="0"; return; }
+  const type=((rec.mimeType||mime||"video/webm")).split(";")[0];
+  const ext=type.indexOf("mp4")>=0 ? "mp4" : "webm";
+  const blob=new Blob(parts,{type});
+  if(!blob.size){ ev("x-書き出しが空だった"); $("exInfo").textContent="中身が空でした。パソコンでお試しください。"; return; }
+  const url=URL.createObjectURL(blob);
+  const link=document.createElement("a");
+  link.href=url; link.download=(fileName.replace(/\.[^.]+$/,""))+"_ラリーだけ."+ext;
+  document.body.appendChild(link); link.click(); link.remove();
+  setTimeout(()=>URL.revokeObjectURL(url),120000);
+  ev("4-書き出せた");
+  const fps=total>0? Math.round(nFrame/total) : 0;
+  $("exInfo").innerHTML=`できました（${fmt(total)}・${(blob.size/1048576).toFixed(0)}MB・${W}×${H}・${ext.toUpperCase()}・毎秒${fps}コマ）`
+    + (fps<24? '<br><span style="color:var(--warn,#E8C25C)">コマ数が少なめです。「軽さ優先」を選ぶか、パソコンで書き出すと滑らかになります</span>' : "");
+};
+$("exCancel").onclick=()=>{ cancelExport=true; };
+
+</script>
+</body>
+</html>
