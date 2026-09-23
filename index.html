@@ -90,11 +90,11 @@ kbd{font-family:"IBM Plex Mono",monospace;font-size:12px;background:var(--panel2
 <div class="wrap">
 
 <nav class="tabs">
-  <span class="on">ラリーを記録する</span>
-  <span class="soon" id="cutTab">ラリーを切り取る（準備中）</span>
+  <span class="on">ラリー記録</span>
+  <span class="soon" id="cutTab">ラリー切り取り（準備中）</span>
 </nav>
 
-<h1>ラリーを記録する</h1>
+<h1>ラリー記録</h1>
 <p class="sub">ラリーの位置を<b>自分で決めて</b>、そこだけをつないだ動画にします。
 判定器を通さないので、<b>つけた印のとおりに仕上がります</b>。動画はどこにも送られません。</p>
 
@@ -874,7 +874,7 @@ else {
   // 作った人だけ、まだ準備中の「切り取る」ページへ行けるようにする
   const t=$("cutTab");
   if(t){ const a=document.createElement("a"); a.href="cut.html?dev";
-    a.textContent="ラリーを切り取る"; t.replaceWith(a); }
+    a.textContent="ラリー切り取り"; t.replaceWith(a); }
 }
 const fmt=s=>Math.floor(Math.max(0,s)/60)+":"+String(Math.floor(Math.max(0,s)%60)).padStart(2,"0");
 const tick=()=>new Promise(r=>setTimeout(r,0));
