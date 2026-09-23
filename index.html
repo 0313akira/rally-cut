@@ -406,7 +406,10 @@ function readTrak(u8, s, e, movieTimescale){
     const [bs]=ctts; const ver=u8[bs], n=FC.u32(u8,bs+4); let k=0;
     for(let i=0;i<n;i++){
       const c=FC.u32(u8,bs+8+i*8);
-      const off = ver===1 ? FC.i32(u8,bs+12+i*8) : FC.u32(u8,bs+12+i*8);
+      /* 並べ替えのずれは負の値もとる。版0でも負として書かれているファイルがあるので、
+         大きすぎる値は負として読み直す（iPhoneのHEVC動画がこれ） */
+      let off = ver===1 ? FC.i32(u8,bs+12+i*8) : FC.u32(u8,bs+12+i*8);
+      if(off > 0x7FFFFFFF) off -= 4294967296;
       for(let j=0;j<c && k<total;j++){ cts[k]=dts[k]+off; k++; }
     }
     while(k<total){ cts[k]=dts[k]; k++; }
@@ -617,8 +620,9 @@ async function fastCut(opt){
 
   /* 元の動画のコマ間隔（マイクロ秒）。これを出力の刻みにする */
   const STEP = (()=>{
-    const d=[]; for(let i=1;i<Math.min(V.samples.length,300);i++) d.push(V.samples[i].t-V.samples[i-1].t);
-    d.sort((x,y)=>x-y);
+    /* 表示の順番はコマによって前後するので、差を引いても当てにならない。
+       各コマに書いてある長さの中央値を使う。 */
+    const d=V.samples.slice(0,600).map(s=>s.d).filter(x=>x>0).sort((x,y)=>x-y);
     const m = d.length? d[d.length>>1] : 1/30;
     return (m>0.002 && m<0.5) ? Math.round(m*1e6) : 33333;
   })();
@@ -712,14 +716,20 @@ async function fastCut(opt){
     if(cancelled && cancelled()) break;
     rangeStart=a; rangeEnd=b; firstOfRange=true;
     lastJ=-1; rangeCap=Math.max(1, Math.floor(((b-a)*1e6 + 1)/STEP));
-    /* a を含むコマ、の手前で一番近いキーフレームから読み始める */
-    let idx = 0;
-    for(let i=0;i<S.length;i++){ if(S[i].t <= a + 1e-9) idx=i; else break; }
-    let key = idx;
-    while(key>0 && !S[key].sync) key--;
-    for(let i=key;i<S.length;i++){
+    /* HEVC などでは「復号する順番」と「画面に出る順番」が違う。
+       並びを前提に打ち切ると必要なコマを取りこぼすので、
+       この範囲に掛かるコマの復号番号の、最初と最後を先に求める。 */
+    let iMin=-1, iMax=-1;
+    for(let i=0;i<S.length;i++){
       const s=S[i];
-      if(s.t >= b) break;
+      if(s.t + s.d > a + 1e-9 && s.t < b - 1e-9){ if(iMin<0) iMin=i; iMax=i; }
+    }
+    if(iMin<0){ outUs += Math.round((b-a)*1e6); continue; }
+    /* その手前で一番近いキーフレームから読み始める */
+    let key = iMin;
+    while(key>0 && !S[key].sync) key--;
+    for(let i=key;i<=iMax;i++){
+      const s=S[i];
       const bytes = await vr.bytes(s.off, s.size);
       decoder.decode(new EncodedVideoChunk({
         type: s.sync? "key":"delta",
@@ -1266,7 +1276,7 @@ function qInfo(){
 document.querySelectorAll('input[name="q"]').forEach(r=>r.onchange=qInfo);
 
 /* 仕組み：印の区間を順番に再生し、その絵をキャンバスに写して録画する */
-let audioCtx=null, audioOut=null, exporting=false, cancelExport=false;
+let audioCtx=null, audioOut=null, exporting=false, cancelExport=false, fallbackWhy="";
 function exSegs(){
   const tail=+$("tail").value||0;
   const head=+$("head").value||0;
@@ -1394,6 +1404,8 @@ async function slowExport(segs){
   const fps=total>0? Math.round(nFrame/total) : 0;
   const mb2=blob.size/1048576;
   $("exInfo").innerHTML=`できました（${fmt(total)}・${mb2<10? mb2.toFixed(1):mb2.toFixed(0)}MB・${W}×${H}・${ext.toUpperCase()}・毎秒${fps}コマ）`
+    + '<br><span style="color:var(--warn,#E8C25C)">昔ながらのやり方で作りました。カクつきや音ズレが出ることがあります。</span>'
+    + (fallbackWhy? `<br><span class="hint">理由：${fallbackWhy}</span>` : "")
     + (fps<24? '<br><span style="color:var(--warn,#E8C25C)">コマ数が少なめです。「軽さ優先」を選ぶか、パソコンで書き出すと滑らかになります</span>' : "");
 }
 
@@ -1414,7 +1426,7 @@ $("exportVideo").onclick=async()=>{
   const segs=exSegs();
   if(!segs.length){ $("exInfo").textContent="先にラリーの印をつけてください"; return; }
   ev("3-書き出しを押した");
-  exporting=true; cancelExport=false;
+  exporting=true; cancelExport=false; fallbackWhy="";
   $("exportVideo").disabled=true; $("exCancel").hidden=false;
   $("exFill").style.width="0";
 
@@ -1446,7 +1458,8 @@ $("exportVideo").onclick=async()=>{
       return;
     }catch(e){
       ev("x-新方式が使えなかった");
-      $("exInfo").innerHTML=`速いやり方が使えませんでした（${(e&&e.message)||e}）。`
+      fallbackWhy = (e&&e.message)||String(e);
+      $("exInfo").innerHTML=`速いやり方が使えませんでした（${fallbackWhy}）。`
         + `<br>いままでのやり方に切り替えます…`;
       await new Promise(r=>setTimeout(r,1200));
       if(cancelExport){ $("exInfo").textContent="やめました";
