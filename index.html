@@ -238,6 +238,7 @@ kbd{font-family:"IBM Plex Mono",monospace;font-size:12px;background:var(--panel2
   <span>動画はこの端末の中だけで処理され、どこにも送られません。</span>
   <span>※どこでつまずくかを知るために、<b>ページを開いた回数とボタンが押された回数だけ</b>を記録しています。個人は特定しません。</span>
   <a href="privacy.html">プライバシーポリシー</a>
+  <span class="hint" style="font-size:11.5px;opacity:.6">版 2026-10-04a</span>
 </footer>
 </div>
 
@@ -915,6 +916,9 @@ function aUsTotal(ranges){ return ranges.reduce((s,[a,b])=>s+(b-a),0); }
    動画を選ぶ → ラリーの間だけ押しっぱなしにする → ラリーだけの動画にする
    という3段階を、上から順に書いてある。
    ===================================================================== */
+
+// この版の番号。画面の下に出る。どの版が動いているかを確かめるために使う
+const APP_VERSION = "2026-10-04a";
 
 // 画面の部品を id で取ってくる（document.getElementById を短く呼ぶため）
 const byId = (id) => document.getElementById(id);
@@ -2204,6 +2208,7 @@ const exportByRecording = async (ranges) => {
     `${outputWidth}×${outputHeight}・${extension.toUpperCase()}・毎秒${framesPerSecond}コマ）` +
     '<br><span style="color:var(--warn,#E8C25C)">昔ながらのやり方で作りました。カクつきや音ズレが出ることがあります。</span>' +
     (fallbackReason ? `<br><span class="hint">理由：${fallbackReason}</span>` : "") +
+    `<br><span class="hint">版 ${APP_VERSION}</span>` +
     (framesPerSecond < 24
       ? '<br><span style="color:var(--warn,#E8C25C)">コマ数が少なめです。「軽さ優先」を選ぶか、パソコンで書き出すと滑らかになります</span>'
       : "");
