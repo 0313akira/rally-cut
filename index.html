@@ -609,7 +609,7 @@ function snapToAudio(ranges, A){
 }
 
 async function fastCut(opt){
-  const {file, maxWidth, bitrate, onStage, onProgress, cancelled} = opt;
+  const {file, maxWidth, bitrate, onStage, onProgress, cancelled, safeMode} = opt;
   const mv = await demux(file);
   const V = mv.vid, A = mv.aud;
   const ranges = snapToAudio(opt.ranges, A);
@@ -629,8 +629,15 @@ async function fastCut(opt){
 
   const inCodec = codecString(V.descType, V.desc);
   const dcfg = {codec:inCodec, codedWidth:srcW, codedHeight:srcH, description:V.desc};
+  /* 慎重モード：端末の専用部品（GPU）を使わずに読み取らせる。
+     遅くなるが、専用部品で止まる端末でも通ることがある。 */
+  if(safeMode) dcfg.hardwareAcceleration = "prefer-software";
   let ok=false;
   try{ ok = (await VideoDecoder.isConfigSupported(dcfg)).supported; }catch(e){}
+  if(!ok && safeMode){
+    delete dcfg.hardwareAcceleration;
+    try{ ok = (await VideoDecoder.isConfigSupported(dcfg)).supported; }catch(e){}
+  }
   if(!ok) throw new Error("この動画の形式をこの端末では開けませんでした（"+inCodec+"）");
 
   /* 出す形式を決める。まずはH.264（どこでも再生できる） */
@@ -659,6 +666,14 @@ async function fastCut(opt){
   const total = ranges.reduce((s,[a,b])=>s+(b-a),0);
 
   let fatal=null;
+  /* 失敗したときに「どこで・何を・どれだけ流した時点か」を残す。
+     端末の中でしか起きない不具合は、これが無いと追えない。 */
+  const diag = {codec:inCodec, out:"", size:srcW+"x"+srcH, range:0, sample:0, total:V.samples.length,
+                queue:0, fed:0, got:0, where:"準備", mode: safeMode? "慎重":"通常"};
+  const diagText = () => `${diag.mode}/${diag.where} / ${diag.codec}→${diag.out} ${diag.size}`
+    + ` / ${diag.range}本目 / コマ${diag.sample}of${diag.total}`
+    + ` / 流した${diag.fed} 受けた${diag.got} 待ち${diag.queue}`;
+
   const encoder = new VideoEncoder({
     output:(chunk, meta)=>{
       if(meta && meta.decoderConfig && !vDesc && meta.decoderConfig.description)
@@ -683,6 +698,7 @@ async function fastCut(opt){
   const decoder = new VideoDecoder({
     output:(frame)=>{
       try{
+        diag.got++;
         const t = frame.timestamp/1e6;
         const du = Math.round(frame.duration || 33333);
         /* 範囲の先頭をまたぐコマは捨てずに使う。そのコマこそ「先頭で見えている絵」 */
@@ -711,9 +727,19 @@ async function fastCut(opt){
 
   if(onStage) onStage("映像を組み立てています");
 
+  diag.out = ecfg.codec;
   const S = V.samples;
+  let rangeNo = 0;
   for(const [a,b] of ranges){
     if(cancelled && cancelled()) break;
+    rangeNo++; diag.range = rangeNo; diag.where = "映像の取り出し";
+    /* 2本目からは復号器を仕切り直す。
+       前の区間の続きだと思われたまま新しいキーフレームを渡すと、
+       止まってしまう端末がある。 */
+    if(rangeNo > 1){
+      try{ decoder.reset(); decoder.configure(dcfg); }
+      catch(e){ fatal = fatal || e; break; }
+    }
     rangeStart=a; rangeEnd=b; firstOfRange=true;
     lastJ=-1; rangeCap=Math.max(1, Math.floor(((b-a)*1e6 + 1)/STEP));
     /* HEVC などでは「復号する順番」と「画面に出る順番」が違う。
@@ -737,24 +763,48 @@ async function fastCut(opt){
         duration: Math.round(s.d*1e6),
         data: bytes
       }));
-      if(decoder.decodeQueueSize > 12 || encoder.encodeQueueSize > 12){
-        await new Promise(r=>setTimeout(r,0));
-        while(encoder.encodeQueueSize > 24) await new Promise(r=>setTimeout(r,4));
+      diag.sample = i; diag.fed++; diag.queue = decoder.decodeQueueSize;
+      if(safeMode){
+        /* 1コマ流すごとに、受け取り終わるまで待つ。一番詰まりにくい */
+        let guard = 0;
+        while(decoder.decodeQueueSize > 0 && !fatal && guard++ < 2000){
+          await new Promise(r=>setTimeout(r,2));
+        }
+        if(fatal) break;
+        if(cancelled && cancelled()) break;
+        continue;
       }
+      /* 詰め込みすぎると受け付けなくなる端末があるので、こまめに待つ */
+      if(decoder.decodeQueueSize > 8 || encoder.encodeQueueSize > 8){
+        await new Promise(r=>setTimeout(r,0));
+        while(decoder.decodeQueueSize > 16 || encoder.encodeQueueSize > 16){
+          if(fatal) break;
+          await new Promise(r=>setTimeout(r,4));
+        }
+      }
+      if(fatal) break;
       if(cancelled && cancelled()) break;
     }
     await decoder.flush();
     outUs += Math.round((b-a)*1e6);
     if(onProgress) onProgress(outUs/1e6, total);
   }
-  await decoder.flush(); decoder.close();
-  await encoder.flush(); encoder.close();
+  diag.where = "仕上げ";
+  try{ await decoder.flush(); }catch(e){ fatal = fatal || e; }
+  try{ decoder.close(); }catch(e){}
+  try{ await encoder.flush(); }catch(e){ fatal = fatal || e; }
+  try{ encoder.close(); }catch(e){}
   if(!vOut.length) throw new Error("コマを1枚も取り出せませんでした");
   if(!vDesc && ecfg.codec.startsWith("vp09")){
     const parts=ecfg.codec.split(".");
     vDesc=new Uint8Array([1,0,0,0, +parts[1]||0, +parts[2]||41, ((+parts[3]||8)<<4), 2,2,2, 0,0]);
   }
-  if(fatal) throw fatal;
+  if(fatal){
+    const base = (fatal && fatal.message) ? fatal.message : String(fatal);
+    const err = new Error(base + "｜" + diagText());
+    err.diag = diagText();
+    throw err;
+  }
   if(!vDesc) throw new Error("作り直した映像の情報を取り出せませんでした");
 
   /* --- 音は作り直さず、元のかけらをそのまま並べる（劣化ゼロ・ズレなし） --- */
@@ -2163,15 +2213,16 @@ const exportByRecording = async (ranges) => {
    🚀 新しいやり方：再生せずにコマを組み替える
    --------------------------------------------------------------------- */
 
-const exportByRebuilding = async (ranges) => {
+const exportByRebuilding = async (ranges, safeMode) => {
   stopAutoPlay();
-  byId("exInfo").textContent = "動画をひらいています…";
+  byId("exInfo").textContent = safeMode ? "慎重なやり方で開き直しています…" : "動画をひらいています…";
 
   const startedAt = performance.now();
   const result = await fastCut({
     file: videoFile,
     ranges,
     maxWidth: getMaxWidth(),
+    safeMode,
     onStage: (stageName) => { byId("exInfo").textContent = stageName + "…"; },
     onProgress: (done, total) => {
       byId("exFill").style.width = Math.round(100 * done / Math.max(total, 0.001)) + "%";
@@ -2228,34 +2279,47 @@ const handleExportStart = async () => {
                         window.VideoDecoder && videoFile);
 
   if (canRebuild) {
-    try {
-      await exportByRebuilding(ranges);
-      byId("exportVideo").disabled = false;
-      byId("exCancel").hidden = true;
-      isExporting = false;
-      return;
-
-    } catch (error) {
-      // 2. 失敗したら理由を残して、昔ながらのやり方へ移る
-      console.error("新しい書き出しに失敗:", error);
-      countEvent("x-新方式が使えなかった");
-      fallbackReason = (error && error.message) || String(error);
-
-      byId("exInfo").innerHTML =
-        `速いやり方が使えませんでした（${fallbackReason}）。<br>いままでのやり方に切り替えます…`;
-      await new Promise((resolve) => setTimeout(resolve, 1200));
-
-      if (isExportCancelled) {
-        byId("exInfo").textContent = "やめました";
+    // 2. まず普通のやり方で、だめなら慎重なやり方で、二度試す
+    for (const safeMode of [false, true]) {
+      try {
+        await exportByRebuilding(ranges, safeMode);
         byId("exportVideo").disabled = false;
         byId("exCancel").hidden = true;
         isExporting = false;
         return;
+
+      } catch (error) {
+        console.error(safeMode ? "慎重なやり方でも失敗:" : "新しい書き出しに失敗:", error);
+        fallbackReason = (error && error.message) || String(error);
+
+        if (isExportCancelled) break;
+
+        // まだ慎重なやり方が残っているなら、そちらを試す
+        if (!safeMode) {
+          byId("exInfo").innerHTML =
+            `うまく開けませんでした（${fallbackReason}）。<br>慎重なやり方でもう一度試します…`;
+          await new Promise((resolve) => setTimeout(resolve, 800));
+          continue;
+        }
+
+        // 3. 二度とも失敗したので、昔ながらのやり方へ移る
+        countEvent("x-新方式が使えなかった");
+        byId("exInfo").innerHTML =
+          `速いやり方が使えませんでした（${fallbackReason}）。<br>いままでのやり方に切り替えます…`;
+        await new Promise((resolve) => setTimeout(resolve, 1200));
       }
+    }
+
+    if (isExportCancelled) {
+      byId("exInfo").textContent = "やめました";
+      byId("exportVideo").disabled = false;
+      byId("exCancel").hidden = true;
+      isExporting = false;
+      return;
     }
   }
 
-  // 3. 昔ながらのやり方で書き出す
+  // 4. 昔ながらのやり方で書き出す
   await exportByRecording(ranges);
 };
 
