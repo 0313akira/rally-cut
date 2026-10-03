@@ -238,7 +238,7 @@ kbd{font-family:"IBM Plex Mono",monospace;font-size:12px;background:var(--panel2
   <span>動画はこの端末の中だけで処理され、どこにも送られません。</span>
   <span>※どこでつまずくかを知るために、<b>ページを開いた回数とボタンが押された回数だけ</b>を記録しています。個人は特定しません。</span>
   <a href="privacy.html">プライバシーポリシー</a>
-  <span class="hint" style="font-size:11.5px;opacity:.6">版 2026-10-04a</span>
+  <span class="hint" style="font-size:11.5px;opacity:.6">版 2026-10-04b</span>
 </footer>
 </div>
 
@@ -786,7 +786,9 @@ async function fastCut(opt){
       if(fatal) break;
       if(cancelled && cancelled()) break;
     }
-    await decoder.flush();
+    try{ await decoder.flush(); }
+    catch(e){ fatal = fatal || e; break; }   /* ここも診断に乗せる */
+    if(fatal) break;
     outUs += Math.round((b-a)*1e6);
     if(onProgress) onProgress(outUs/1e6, total);
   }
@@ -807,6 +809,25 @@ async function fastCut(opt){
     throw err;
   }
   if(!vDesc) throw new Error("作り直した映像の情報を取り出せませんでした");
+
+  return await finishMp4({file, mv, ranges, vOut, vDesc, ecfg, W, H, outUs, onStage});
+}
+
+/* ---------- 音をそろえて、1本のMP4に組み立てる ----------
+   映像のコマをどうやって集めたかに関わらず、ここから先は共通。 */
+async function finishMp4(ctx){
+  const {file, mv, ranges, vOut, ecfg, W, H, outUs, onStage} = ctx;
+  let vDesc = ctx.vDesc;
+  const VT = 1000000;           /* 映像の時間の刻み（マイクロ秒） */
+  /* VP9 など、符号化側が情報を返さない形式では自分で作る */
+  if(!vDesc && ecfg.codec.startsWith("vp09")){
+    const parts = ecfg.codec.split(".");
+    vDesc = new Uint8Array([1,0,0,0, +parts[1]||0, +parts[2]||41, ((+parts[3]||8)<<4), 2,2,2, 0,0]);
+  }
+  if(!vDesc) throw new Error("作り直した映像の情報を取り出せませんでした");
+  const A = mv.aud;
+  const aOut = [];
+  let aShiftTicks = 0;
 
   /* --- 音は作り直さず、元のかけらをそのまま並べる（劣化ゼロ・ズレなし） --- */
   if(A){
@@ -904,7 +925,147 @@ async function fastCut(opt){
   return {blob:new Blob(parts,{type:"video/mp4"}), width:W, height:H,
           frames:vOut.length, seconds:outUs/1e6, codec:ecfg.codec};
 }
+
 function aUsTotal(ranges){ return ranges.reduce((s,[a,b])=>s+(b-a),0); }
+
+/* =====================================================================
+   🎞 再生して取り込むやり方（読み取り器が使えない端末のための中間案）
+
+   Safari が HEVC などを読み取れない端末では fastCut が使えない。
+   そこで「動画を再生して、出てきた絵をそのまま取り込む」。
+
+   昔ながらの録画と違うのは2点。
+     ・コマの時刻を自分で書き込む（再生が乱れても時間が伸びない）
+     ・音は録音せず、元のかけらをそのまま並べる（劣化もズレも無い）
+   速さは実時間ぶんかかるが、音ズレは起きない。
+   ===================================================================== */
+async function playbackCut(opt){
+  const {file, video, maxWidth, bitrate, onStage, onProgress, cancelled} = opt;
+  const mv = await demux(file);
+  const V = mv.vid;
+  const ranges = snapToAudio(opt.ranges, V ? mv.aud : null);
+
+  const srcW = Math.round(V.w), srcH = Math.round(V.h);
+  const W = Math.round(Math.min(maxWidth||1920, srcW)/2)*2;
+  const H = Math.round(srcH*W/srcW/2)*2;
+
+  /* 元の動画のコマ間隔（マイクロ秒） */
+  const STEP = (()=>{
+    const d=V.samples.slice(0,600).map(s=>s.d).filter(x=>x>0).sort((x,y)=>x-y);
+    const m = d.length? d[d.length>>1] : 1/30;
+    return (m>0.002 && m<0.5) ? Math.round(m*1e6) : 33333;
+  })();
+
+  /* 出す形式を決める（読み取りは使わないので、作り直す側だけ） */
+  const kbps = bitrate || Math.min(24000000, Math.max(4000000, Math.round(W*H*30*0.18)));
+  const want = ["avc1.640034","avc1.640033","avc1.64002A","avc1.640028",
+                "avc1.4D0028","avc1.42E028","hvc1.1.6.L153.B0","vp09.00.41.08"];
+  let ecfg=null;
+  for(const hw of ["prefer-hardware","no-preference"]){
+    for(const c of want){
+      const cfg = {codec:c, width:W, height:H, bitrate:kbps,
+                   framerate:Math.max(1,Math.round(1e6/STEP)), hardwareAcceleration:hw};
+      if(c.startsWith("avc1")) cfg.avc={format:"avc"};
+      if(c.startsWith("hvc1")) cfg.hevc={format:"hevc"};
+      try{ if((await VideoEncoder.isConfigSupported(cfg)).supported){ ecfg=cfg; break; } }catch(e){}
+    }
+    if(ecfg) break;
+  }
+  if(!ecfg) throw new Error("この端末では動画を作り直せませんでした");
+
+  const vOut=[]; let vDesc=null, fatal=null;
+  const encoder = new VideoEncoder({
+    output:(chunk, meta)=>{
+      if(meta && meta.decoderConfig && !vDesc && meta.decoderConfig.description)
+        vDesc = new Uint8Array(meta.decoderConfig.description);
+      const b=new Uint8Array(chunk.byteLength); chunk.copyTo(b);
+      vOut.push({data:b, cts:chunk.timestamp, dur:chunk.duration||0, sync:chunk.type==="key"});
+    },
+    error:e=>{ fatal = fatal||e; }
+  });
+  encoder.configure(ecfg);
+
+  /* 絵を受け取るための板 */
+  const canvas = self.OffscreenCanvas ? new OffscreenCanvas(W,H)
+    : Object.assign(document.createElement("canvas"),{width:W,height:H});
+  const context = canvas.getContext("2d",{alpha:false});
+  try{ context.imageSmoothingQuality="high"; }catch(e){}
+
+  const seekTo = (t)=>new Promise((resolve)=>{
+    let done=false;
+    const finish=()=>{ if(!done){ done=true; resolve(); } };
+    video.addEventListener("seeked", finish, {once:true});
+    setTimeout(finish, 3000);                 /* 反応が返らない端末があるので打ち切る */
+    video.currentTime = Math.max(0, Math.min(t, (V.samples[V.samples.length-1].t)||t));
+  });
+
+  const wasMuted = video.muted, wasRate = video.playbackRate;
+  video.muted = true;                         /* 音は別で並べるので、鳴らす必要がない */
+  video.playbackRate = 1;
+
+  const total = ranges.reduce((s,[a,b])=>s+(b-a),0);
+  let outUs = 0;
+
+  if(onStage) onStage("映像を取り込んでいます");
+
+  try{
+    for(const [a,b] of ranges){
+      if(cancelled && cancelled()) break;
+      if(fatal) break;
+
+      await seekTo(a);
+      let lastJ = -1, first = true;
+      const cap = Math.max(1, Math.floor(((b-a)*1e6 + 1)/STEP));
+      const base = outUs;
+
+      await new Promise((resolve)=>{
+        let finished = false;
+        const finish = ()=>{ if(!finished){ finished = true; resolve(); } };
+
+        const onFrame = (now, meta)=>{
+          if(finished) return;
+          if(fatal || (cancelled && cancelled())){ finish(); return; }
+
+          const t = (meta && typeof meta.mediaTime==="number") ? meta.mediaTime : video.currentTime;
+          if(t >= b - 1e-9 || video.ended){ finish(); return; }
+
+          /* 元の時刻から、等間隔の格子の何番目かを決める */
+          const j = Math.round((t - a)*1e6/STEP);
+          if(j > lastJ && j >= 0 && j < cap){
+            lastJ = j;
+            try{
+              context.drawImage(video, 0, 0, W, H);
+              const frame = new VideoFrame(canvas, {timestamp: base + j*STEP, duration: STEP});
+              encoder.encode(frame, {keyFrame: first});
+              frame.close();
+              first = false;
+            }catch(e){ fatal = fatal||e; finish(); return; }
+          }
+          video.requestVideoFrameCallback(onFrame);
+        };
+
+        video.play().then(()=>{ video.requestVideoFrameCallback(onFrame); })
+                    .catch((e)=>{ fatal = fatal||e; finish(); });
+        setTimeout(finish, Math.max(20000, (b-a)*3000));   /* 止まったままにしない */
+      });
+
+      try{ video.pause(); }catch(e){}
+      outUs += Math.round((b-a)*1e6);
+      if(onProgress) onProgress(outUs/1e6, total);
+    }
+  } finally {
+    video.muted = wasMuted;
+    video.playbackRate = wasRate;
+  }
+
+  try{ await encoder.flush(); }catch(e){ fatal = fatal||e; }
+  try{ encoder.close(); }catch(e){}
+
+  if(fatal) throw new Error(((fatal && fatal.message) || String(fatal)) + "｜再生取り込み");
+  if(!vOut.length) throw new Error("コマを1枚も取り込めませんでした");
+
+  return await finishMp4({file, mv, ranges, vOut, vDesc, ecfg, W, H, outUs, onStage});
+}
 
 </script>
 <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js"></script>
@@ -918,7 +1079,7 @@ function aUsTotal(ranges){ return ranges.reduce((s,[a,b])=>s+(b-a),0); }
    ===================================================================== */
 
 // この版の番号。画面の下に出る。どの版が動いているかを確かめるために使う
-const APP_VERSION = "2026-10-04a";
+const APP_VERSION = "2026-10-04b";
 
 // 画面の部品を id で取ってくる（document.getElementById を短く呼ぶため）
 const byId = (id) => document.getElementById(id);
@@ -2257,6 +2418,50 @@ const exportByRebuilding = async (ranges, safeMode) => {
 };
 
 /* ---------------------------------------------------------------------
+   🎞 中間案：再生して取り込む
+   読み取り器が使えない端末でも、音ズレだけは起こさない。
+   --------------------------------------------------------------------- */
+
+const exportByPlaybackCapture = async (ranges) => {
+  stopAutoPlay();
+  byId("exInfo").textContent = "再生しながら取り込みます…";
+
+  const startedAt = performance.now();
+  const result = await playbackCut({
+    file: videoFile,
+    video: videoElement,
+    ranges,
+    maxWidth: getMaxWidth(),
+    onStage: (stageName) => { byId("exInfo").textContent = stageName + "…"; },
+    onProgress: (done, total) => {
+      byId("exFill").style.width = Math.round(100 * done / Math.max(total, 0.001)) + "%";
+      byId("exInfo").textContent = `取り込み中… ${formatTime(done)} / ${formatTime(total)}`;
+    },
+    cancelled: () => isExportCancelled,
+  });
+
+  if (isExportCancelled) {
+    byId("exInfo").textContent = "やめました";
+    byId("exFill").style.width = "0";
+    return;
+  }
+
+  downloadVideo(result.blob, "mp4");
+  countEvent("4-書き出せた");
+
+  const seconds = (performance.now() - startedAt) / 1000;
+  const sizeMB = result.blob.size / 1048576;
+  byId("exFill").style.width = "100%";
+  byId("exInfo").innerHTML =
+    `できました（${formatTime(result.seconds)}・` +
+    `${sizeMB < 10 ? sizeMB.toFixed(1) : sizeMB.toFixed(0)}MB・` +
+    `${result.width}×${result.height}・MP4）` +
+    `<br><span class="hint">かかった時間 ${seconds.toFixed(1)}秒。` +
+    `再生して取り込みましたが、時刻は自分で書いているので音ズレはありません。</span>` +
+    `<br><span class="hint">版 ${APP_VERSION}</span>`;
+};
+
+/* ---------------------------------------------------------------------
    🎬 書き出しボタン
    まず新しいやり方を試し、だめなら昔ながらのやり方に自動で切り替える。
    --------------------------------------------------------------------- */
@@ -2307,11 +2512,29 @@ const handleExportStart = async () => {
           continue;
         }
 
-        // 3. 二度とも失敗したので、昔ながらのやり方へ移る
+        // 3. 二度とも失敗した。読み取り器は使えない端末とみなす
         countEvent("x-新方式が使えなかった");
+      }
+    }
+
+    // 4. 再生して取り込むやり方を試す（音ズレだけは起こさない）
+    if (!isExportCancelled && window.playbackCut) {
+      try {
         byId("exInfo").innerHTML =
-          `速いやり方が使えませんでした（${fallbackReason}）。<br>いままでのやり方に切り替えます…`;
-        await new Promise((resolve) => setTimeout(resolve, 1200));
+          `動画を直接ひらけませんでした（${fallbackReason}）。` +
+          `<br>再生して取り込むやり方に切り替えます…`;
+        await new Promise((resolve) => setTimeout(resolve, 900));
+
+        await exportByPlaybackCapture(ranges);
+        byId("exportVideo").disabled = false;
+        byId("exCancel").hidden = true;
+        isExporting = false;
+        return;
+
+      } catch (error) {
+        console.error("再生して取り込むやり方も失敗:", error);
+        countEvent("x-取り込みも失敗");
+        fallbackReason = (error && error.message) || String(error);
       }
     }
 
@@ -2324,7 +2547,7 @@ const handleExportStart = async () => {
     }
   }
 
-  // 4. 昔ながらのやり方で書き出す
+  // 5. 最後の手段：昔ながらのやり方で書き出す
   await exportByRecording(ranges);
 };
 
